@@ -21,7 +21,7 @@ func (s *MessageStore) CreateMessages(ctx context.Context, tx pgx.Tx, messages [
 		return nil
 	}
 	var (
-		query = squirrel.Insert("im_message.messages").
+		query = squirrel.StatementBuilder.PlaceholderFormat(squirrel.Dollar).Insert("im_message.messages").
 			Columns(
 				"id",
 				"domain_id",
@@ -68,21 +68,23 @@ func (s *MessageStore) CreateDocuments(ctx context.Context, tx pgx.Tx, documents
 		return nil
 	}
 	var (
-		query = squirrel.Insert("im_message.message_documents").
+		query = squirrel.StatementBuilder.PlaceholderFormat(squirrel.Dollar).Insert("im_message.message_documents").
 			Columns(
+				"id",
 				"message_id",
 				"file_id",
 				"name",
 				"mime",
 				"size",
 				"created_at",
-			)
+			).PlaceholderFormat(squirrel.Dollar)
 	)
 	for _, d := range documents {
 		if d == nil {
 			continue
 		}
 		query = query.Values(
+			d.ID,
 			d.MessageID,
 			d.FileID,
 			d.Name,

@@ -20,6 +20,7 @@ type MigrationRowFilters struct {
 	Type      []EntityType
 	OldIDs    []string
 	ExtraKeys []string
+	DomainID  int
 }
 
 type MigrationRow struct {

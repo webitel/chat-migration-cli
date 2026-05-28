@@ -2,11 +2,13 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"strconv"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/rivo/uniseg"
 	modelnew "github.com/webitel/chat-migration-cli/internal/model/new"
 	modelold "github.com/webitel/chat-migration-cli/internal/model/old"
 )
@@ -172,7 +174,7 @@ func (c *Converter) migratePageMessages(ctx context.Context, tx pgx.Tx, threadID
 
 		initiator, bot, operators := c.filterMessagesBySender(msgs)
 
-		converted, files, err := c.convertOperatorMessagesFromMaps(threadID, senderMaps, operators)
+		converted, files, err := c.convertOperatorMessagesFromMaps(threadID, senderMaps, operators, conv.DomainID)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -182,14 +184,14 @@ func (c *Converter) migratePageMessages(ctx context.Context, tx pgx.Tx, threadID
 		initiatorID := strconv.Itoa(conv.Initiator)
 		contactID := senderMaps.initiatorContactsByID[initiatorID]
 		memberID := senderMaps.initiatorMembersByKey[initiatorID+":"+threadID.String()]
-		converted, files = c.buildMessagesForSender(threadID, contactID, memberID, initiator)
+		converted, files = c.buildMessagesForSender(threadID, contactID, memberID, initiator, conv.DomainID)
 		allMessages = append(allMessages, converted...)
 		allFiles = append(allFiles, files...)
 
 		botID := strconv.Itoa(conv.FlowID)
 		contactID = senderMaps.botContactsByID[botID]
 		memberID = senderMaps.botMembersByKey[botID+":"+threadID.String()]
-		converted, files = c.buildMessagesForSender(threadID, contactID, memberID, bot)
+		converted, files = c.buildMessagesForSender(threadID, contactID, memberID, bot, conv.DomainID)
 		allMessages = append(allMessages, converted...)
 		allFiles = append(allFiles, files...)
 	}
@@ -214,7 +216,6 @@ func (c *Converter) batchFetchMessages(ctx context.Context, threadIDToConv map[u
 
 func (c *Converter) buildPageSenderMaps(ctx context.Context, tx pgx.Tx, threadIDToConv map[uuid.UUID]*modelold.GroupedConversation) (*pageSenderMaps, error) {
 	var (
-		operatorIntIDs  []int
 		operatorIDStrs  []string
 		initiatorIDStrs []string
 		botIDStrs       []string
@@ -233,7 +234,6 @@ func (c *Converter) buildPageSenderMaps(ctx context.Context, tx pgx.Tx, threadID
 		for _, u := range conv.InternalUsers {
 			if _, ok := seenOps[u.UserID]; !ok {
 				seenOps[u.UserID] = struct{}{}
-				operatorIntIDs = append(operatorIntIDs, u.UserID)
 				operatorIDStrs = append(operatorIDStrs, strconv.Itoa(u.UserID))
 			}
 		}
@@ -256,8 +256,8 @@ func (c *Converter) buildPageSenderMaps(ctx context.Context, tx pgx.Tx, threadID
 		botMembersByKey:       make(map[string]uuid.UUID),
 	}
 
-	if len(operatorIntIDs) > 0 {
-		contacts, err := c.newDB.ContactStore().GetWebitelUsersByWebitelUserIDs(ctx, tx, operatorIntIDs)
+	if len(operatorIDStrs) > 0 {
+		contacts, err := c.newDB.ContactStore().GetByWebitelUserIDs(ctx, tx, operatorIDStrs)
 		if err != nil {
 			return nil, err
 		}
@@ -331,7 +331,7 @@ func (c *Converter) buildPageSenderMaps(ctx context.Context, tx pgx.Tx, threadID
 	return result, nil
 }
 
-func (c *Converter) convertOperatorMessagesFromMaps(threadID uuid.UUID, maps *pageSenderMaps, messages []*modelold.Message) ([]*modelnew.Message, []*modelnew.MessageDocument, error) {
+func (c *Converter) convertOperatorMessagesFromMaps(threadID uuid.UUID, maps *pageSenderMaps, messages []*modelold.Message, domainID int) ([]*modelnew.Message, []*modelnew.MessageDocument, error) {
 	var (
 		newMessages []*modelnew.Message
 		files       []*modelnew.MessageDocument
@@ -343,7 +343,7 @@ func (c *Converter) convertOperatorMessagesFromMaps(threadID uuid.UUID, maps *pa
 		userIDStr := strconv.Itoa(*oldMsg.UserID)
 		contactID := maps.operatorContactsByID[userIDStr]
 		memberID := maps.operatorMembersByKey[userIDStr+":"+threadID.String()]
-		msg, file := c.buildMessage(threadID, contactID, memberID, oldMsg)
+		msg, file := c.buildMessage(threadID, contactID, memberID, oldMsg, domainID)
 		if file != nil {
 			files = append(files, file)
 		}
@@ -352,13 +352,13 @@ func (c *Converter) convertOperatorMessagesFromMaps(threadID uuid.UUID, maps *pa
 	return newMessages, files, nil
 }
 
-func (c *Converter) buildMessagesForSender(threadID, senderID, memberID uuid.UUID, messages []*modelold.Message) ([]*modelnew.Message, []*modelnew.MessageDocument) {
+func (c *Converter) buildMessagesForSender(threadID, senderID, memberID uuid.UUID, messages []*modelold.Message, domainID int) ([]*modelnew.Message, []*modelnew.MessageDocument) {
 	var (
 		newMessages []*modelnew.Message
 		files       []*modelnew.MessageDocument
 	)
 	for _, oldMsg := range messages {
-		msg, file := c.buildMessage(threadID, senderID, memberID, oldMsg)
+		msg, file := c.buildMessage(threadID, senderID, memberID, oldMsg, domainID)
 		if file != nil {
 			files = append(files, file)
 		}
@@ -367,7 +367,7 @@ func (c *Converter) buildMessagesForSender(threadID, senderID, memberID uuid.UUI
 	return newMessages, files
 }
 
-func (c *Converter) buildMessage(threadID, senderID, memberID uuid.UUID, oldMsg *modelold.Message) (*modelnew.Message, *modelnew.MessageDocument) {
+func (c *Converter) buildMessage(threadID, senderID, memberID uuid.UUID, oldMsg *modelold.Message, domainID int) (*modelnew.Message, *modelnew.MessageDocument) {
 	var body string
 	if oldMsg.Text != nil {
 		body = *oldMsg.Text
@@ -384,9 +384,10 @@ func (c *Converter) buildMessage(threadID, senderID, memberID uuid.UUID, oldMsg 
 		MemberID:  memberID,
 		Type:      messageType,
 		Body:      body,
-		Metadata:  oldMsg.Variables,
+		Metadata:  buildMetadata(body),
 		CreatedAt: oldMsg.CreatedAt,
 		UpdatedAt: updatedAt,
+		DomainID:  int32(domainID),
 	}
 	if oldMsg.Content != nil && oldMsg.Content.Keyboard != nil {
 		newMsg.Interactive = &modelnew.MessageInteractive{
@@ -406,6 +407,16 @@ func (c *Converter) buildMessage(threadID, senderID, memberID uuid.UUID, oldMsg 
 		}
 	}
 	return newMsg, file
+}
+
+func buildMetadata(text string) []byte {
+	res := map[string]any{
+		"entities":  nil,
+		"graphemes": uniseg.GraphemeClusterCount(text),
+	}
+	encoded, _ := json.Marshal(res)
+	return encoded
+
 }
 
 func (c *Converter) filterMessagesBySender(messages []*modelold.Message) (initiator []*modelold.Message, bot []*modelold.Message, operators []*modelold.Message) {
@@ -437,16 +448,29 @@ func (c *Converter) convertMessageType(oldType modelold.OldMessageType) modelnew
 }
 
 func (c *Converter) convertMessageDocument(messageID uuid.UUID, oldMsg *modelold.Message) *modelnew.MessageDocument {
-	return &modelnew.MessageDocument{
+	if oldMsg == nil {
+		return nil
+	}
+	var res = modelnew.MessageDocument{
 		ID:        uuid.New(),
 		MessageID: messageID,
-		FileID:    *oldMsg.FileID,
-		Name:      *oldMsg.FileName,
-		Mime:      *oldMsg.FileType,
-		Size:      *oldMsg.FileSize,
-		CreatedAt: oldMsg.CreatedAt,
-		URL:       *oldMsg.FileURL,
 	}
+	if oldMsg.FileID != nil {
+		res.FileID = *oldMsg.FileID
+	}
+	if oldMsg.FileName != nil {
+		res.Name = *oldMsg.FileName
+	}
+	if oldMsg.FileType != nil {
+		res.Mime = *oldMsg.FileType
+	}
+	if oldMsg.FileSize != nil {
+		res.Size = *oldMsg.FileSize
+	}
+	if oldMsg.FileURL != nil {
+		res.URL = *oldMsg.FileURL
+	}
+	return &res
 }
 
 func (c *Converter) convertButtons(previousReplyMarkup *modelold.ReplyMarkup) *modelnew.KeyboardButtonMarkup {
@@ -465,9 +489,11 @@ func (c *Converter) convertButtons(previousReplyMarkup *modelold.ReplyMarkup) *m
 
 func (c *Converter) convertButton(button *modelold.Button) *modelnew.KeyboardButton {
 	return &modelnew.KeyboardButton{
-		ID:    *button.Code,
 		Label: button.Text,
 		URL:   button.Url,
-		Data:  &button.Text,
+		Data:  button.Code,
+		Metadata: map[string]any{
+			"share": button.Share,
+		},
 	}
 }

@@ -12,13 +12,15 @@ type GroupedConversation struct {
 	FlowID        int                 `db:"flow_id"`
 	Title         string              `db:"title"`
 	DomainID      int                 `db:"domain_id"`
+	CreatedAt     time.Time           `db:"created_at"`
 	InternalUsers []*ConversationUser `db:"internal_users"`
 }
 
 type ConversationUser struct {
-	ChannelIDs  []uuid.UUID `db:"channel_id"`
-	UserID      int         `db:"user_id"`
-	CreatedAt   time.Time   `db:"created_at"`
-	ClosedAt    time.Time   `db:"closed_at"`
-	LeaveReason *string     `db:"leave_reason"`
+	ChannelIDs  []uuid.UUID `json:"channel_ids"`
+	UserID      int         `json:"user_id"`
+	CreatedAt   time.Time   `json:"created_at"`
+	ClosedAt    time.Time   `json:"closed_at"`
+	LeaveReason *string     `json:"leave_reason"`
+	Name        *string     `json:"name"`
 }

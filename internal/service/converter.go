@@ -27,11 +27,12 @@ func NewResolver(db *newdb.DB) *Resolver {
 	return &Resolver{db: db}
 }
 
-func (r *Resolver) ResolveMigrationRow(ctx context.Context, tx pgx.Tx, entityType modelnew.EntityType, oldID string, extraKey string) (*modelnew.MigrationRow, error) {
+func (r *Resolver) ResolveMigrationRow(ctx context.Context, tx pgx.Tx, entityType modelnew.EntityType, oldID string, extraKey string, domainID int) (*modelnew.MigrationRow, error) {
 	return r.db.MigrationStore().GetMigrationRow(ctx, tx, &modelnew.MigrationRowFilters{
 		Type:      []modelnew.EntityType{entityType},
 		OldIDs:    []string{oldID},
 		ExtraKeys: []string{extraKey},
+		DomainID:  domainID,
 	})
 }
 
@@ -61,14 +62,17 @@ func NewConverter(oldDB *olddb.DB, modelnewDB *newdb.DB) *Converter {
 }
 
 func (c *Converter) Migrate(ctx context.Context) error {
-	return c.runSteps(ctx, "")
+	return c.runSteps(ctx)
 }
 
 func (c *Converter) MigrateFromStep(ctx context.Context, stepName string) error {
-	return c.runSteps(ctx, stepName)
+	return c.runStepsFrom(ctx, stepName)
 }
 
-func (c *Converter) runSteps(ctx context.Context, startFrom string) error {
+func (c *Converter) runStepsFrom(ctx context.Context, startFrom string) error {
+	if startFrom == "" {
+		return errors.New("step requires to start from it")
+	}
 	steps := c.getMigrationSteps()
 
 	completed, err := c.newDB.MigrationStore().GetCompletedSteps(ctx)
@@ -76,15 +80,26 @@ func (c *Converter) runSteps(ctx context.Context, startFrom string) error {
 		return err
 	}
 
-	run := startFrom == ""
-	for _, step := range steps {
-		if !run {
-			run = step.Name == startFrom
-			if !run {
-				continue
+	var (
+		firstStepIndex int
+	)
+	for i, step := range steps {
+		if step.Name == startFrom {
+			if _, alreadyCompleted := completed[step.Name]; alreadyCompleted {
+				for s, nextUncompletedStep := range steps[i-1:] {
+					if _, alreadyCompleted := completed[nextUncompletedStep.Name]; !alreadyCompleted {
+						firstStepIndex = s
+						break
+					}
+				}
+			} else {
+				firstStepIndex = i
 			}
+			break
 		}
+	}
 
+	for _, step := range steps[firstStepIndex:] {
 		if _, ok := completed[step.Name]; ok {
 			c.log.Info("migration step already completed, skipping", "step", step.Name)
 			continue
@@ -100,11 +115,33 @@ func (c *Converter) runSteps(ctx context.Context, startFrom string) error {
 		}
 		c.log.Info("migration step completed", "step", step.Name)
 	}
+	return nil
+}
 
-	if startFrom != "" && !run {
-		return errors.New("start step not found")
+func (c *Converter) runSteps(ctx context.Context) error {
+	steps := c.getMigrationSteps()
+
+	completed, err := c.newDB.MigrationStore().GetCompletedSteps(ctx)
+	if err != nil {
+		return err
 	}
 
+	for _, step := range steps {
+		if _, ok := completed[step.Name]; ok {
+			c.log.Info("migration step already completed, skipping", "step", step.Name)
+			continue
+		}
+
+		c.log.Info("migration step started", "step", step.Name)
+		if err := step.Run(ctx); err != nil {
+			return err
+		}
+
+		if err := c.newDB.MigrationStore().MarkStepCompleted(ctx, step.Name); err != nil {
+			return err
+		}
+		c.log.Info("migration step completed", "step", step.Name)
+	}
 	return nil
 }
 

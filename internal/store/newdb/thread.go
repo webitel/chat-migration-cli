@@ -2,6 +2,7 @@ package newdb
 
 import (
 	"context"
+	"strconv"
 
 	"github.com/Masterminds/squirrel"
 	"github.com/jackc/pgx/v5"
@@ -21,10 +22,28 @@ func (s *ThreadStore) InsertThreads(ctx context.Context, tx pgx.Tx, threads []*n
 		return nil
 	}
 	var (
-		query = squirrel.StatementBuilder.PlaceholderFormat(squirrel.Dollar).Insert("im_thread.thread").Columns("id", "domain_id", "created_at", "updated_at", "kind", "owner", "subject", "description")
+		query = squirrel.StatementBuilder.PlaceholderFormat(squirrel.Dollar).Insert("im_thread.thread").Columns(
+			"id",
+			"domain_id",
+			"created_at",
+			"updated_at",
+			"kind",
+			"owner",
+			"subject",
+			"description",
+		)
 	)
 	for _, thread := range threads {
-		query = query.Values(thread.ID, thread.DomainID, thread.CreatedAt, thread.UpdatedAt, thread.Kind, thread.Owner, thread.Subject, thread.Description)
+		query = query.Values(
+			thread.ID,
+			thread.DomainID,
+			thread.CreatedAt,
+			thread.UpdatedAt,
+			strconv.Itoa(int(thread.Kind)),
+			thread.Owner,
+			thread.Subject,
+			thread.Description,
+		)
 	}
 
 	sql, args, err := query.ToSql()

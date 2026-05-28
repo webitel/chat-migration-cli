@@ -63,6 +63,9 @@ func (s *MigrationStore) applyFilters(query squirrel.SelectBuilder, filters *mod
 	if len(filters.ExtraKeys) != 0 {
 		query = query.Where("extra_key = ANY(?)", filters.ExtraKeys)
 	}
+	if filters.DomainID != 0 {
+		query = query.Where("domain_id = ?", filters.DomainID)
+	}
 
 	return query
 }
@@ -103,34 +106,53 @@ func (s *MigrationStore) InsertMigrations(ctx context.Context, tx pgx.Tx, migrat
 	if len(migrations) == 0 {
 		return nil
 	}
-	var (
-		query = squirrel.StatementBuilder.PlaceholderFormat(squirrel.Dollar).Insert("public.chat_migration").Columns(
-			"id",
-			"entity_type",
-			"old_id",
-			"new_id",
-			"domain_id",
-			"extra_key",
+
+	// 65535 parameters max for a single query
+	// for each row there is 6 params
+	// 8000 rows * 6 parameters per row = 48000
+	const chunkSize = 8000
+
+	for i := 0; i < len(migrations); i += chunkSize {
+		end := i + chunkSize
+		if end > len(migrations) {
+			end = len(migrations)
+		}
+
+		chunk := migrations[i:end]
+
+		var (
+			query = squirrel.StatementBuilder.PlaceholderFormat(squirrel.Dollar).Insert("public.chat_migration").Columns(
+				"id",
+				"entity_type",
+				"old_id",
+				"new_id",
+				"domain_id",
+				"extra_key",
+			)
 		)
-	)
-	for _, migration := range migrations {
-		query = query.Values(
-			migration.ID,
-			migration.EntityType,
-			migration.OldID,
-			migration.NewID,
-			migration.DomainID,
-			migration.ExtraKey,
-		)
+		for _, migration := range chunk {
+			query = query.Values(
+				migration.ID,
+				migration.EntityType,
+				migration.OldID,
+				migration.NewID,
+				migration.DomainID,
+				migration.ExtraKey,
+			)
+		}
+
+		sql, args, err := query.ToSql()
+		if err != nil {
+			return err
+		}
+
+		_, err = tx.Exec(ctx, sql, args...)
+		if err != nil {
+			return err
+		}
 	}
 
-	sql, args, err := query.ToSql()
-	if err != nil {
-		return err
-	}
-
-	_, err = tx.Exec(ctx, sql, args...)
-	return err
+	return nil
 }
 
 func (s *MigrationStore) GetCompletedSteps(ctx context.Context) (map[string]struct{}, error) {

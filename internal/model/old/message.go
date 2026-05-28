@@ -47,8 +47,6 @@ type Message struct {
 // JSON keys match protojson output (UseProtoNames=true, UseEnumNumbers=true).
 type Content struct {
 	Keyboard *ReplyMarkup `json:"keyboard,omitempty"`
-	Postback *Postback    `json:"postback,omitempty"`
-	Contact  *Account     `json:"contact,omitempty"`
 }
 
 // ReplyMarkup is the keyboard / quick-reply layout attached to a message.
@@ -136,7 +134,7 @@ func (c *Content) Scan(src interface{}) error {
 
 // Value implements driver.Valuer so Content can be written back to DB.
 func (c Content) Value() (driver.Value, error) {
-	if c.Keyboard == nil && c.Postback == nil && c.Contact == nil {
+	if c.Keyboard == nil {
 		return nil, nil // store NULL when empty
 	}
 	b, err := json.Marshal(c)

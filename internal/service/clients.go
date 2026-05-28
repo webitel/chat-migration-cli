@@ -2,7 +2,9 @@ package service
 
 import (
 	"context"
+	"fmt"
 	"strconv"
+	"strings"
 
 	"github.com/google/uuid"
 	modelnew "github.com/webitel/chat-migration-cli/internal/model/new"
@@ -72,8 +74,27 @@ func convertClientToContact(client *old.Client) []*modelnew.Contact {
 			SubjectID: client.ExternalID,
 			Type:      client.Type,
 			Name:      client.Name,
+			Username:  buildUsernameForClient(client),
 			IsBot:     false,
 		})
 	}
 	return contacts
+}
+
+func buildUsernameForClient(cli *old.Client) string {
+	return buildUsername(cli.Name, cli.Type, cli.ExternalID)
+}
+
+func buildUsername(name, userType, userID string) string {
+	replacedName := replaceCharactersForUsername(name)
+	replacedType := replaceCharactersForUsername(userType)
+	replacedID := replaceCharactersForUsername(userID)
+	return fmt.Sprintf("%s_%s_%s", replacedName, replacedType, replacedID)
+}
+
+func replaceCharactersForUsername(in string) string {
+	lowered := strings.ToLower(in)
+	replacedBlank := strings.ReplaceAll(lowered, " ", "_")
+	replacedDash := strings.ReplaceAll(replacedBlank, "-", "_")
+	return replacedDash
 }

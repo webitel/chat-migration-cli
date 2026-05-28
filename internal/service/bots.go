@@ -34,15 +34,9 @@ func (c *Converter) MigrateBotsToContacts(ctx context.Context) error {
 			migrationRows []*modelnew.MigrationRow
 		)
 		for _, bot := range bots {
-			converted := convertBotToContact(bot)
+			converted, migrations := convertBotToContact(bot)
 			contacts = append(contacts, converted)
-			migrationRows = append(migrationRows, &modelnew.MigrationRow{
-				ID:         uuid.New(),
-				EntityType: modelnew.EntityTypeBotContact,
-				OldID:      strconv.Itoa(int(bot.FlowID)),
-				NewID:      converted.ID,
-				DomainID:   converted.DomainID,
-			})
+			migrationRows = append(migrationRows, migrations...)
 		}
 		if err := c.newDB.ContactStore().InsertContacts(ctx, tx, contacts); err != nil {
 			return false, err
@@ -59,8 +53,8 @@ func (c *Converter) MigrateBotsToContacts(ctx context.Context) error {
 	return tx.Commit(ctx)
 }
 
-func convertBotToContact(bot *old.Bot) *modelnew.Contact {
-	return &modelnew.Contact{
+func convertBotToContact(bot *old.Bot) (*modelnew.Contact, []*modelnew.MigrationRow) {
+	res := &modelnew.Contact{
 		BaseModel: modelnew.BaseModel{
 			ID:        uuid.New(),
 			DomainID:  bot.DC,
@@ -74,4 +68,16 @@ func convertBotToContact(bot *old.Bot) *modelnew.Contact {
 		Username:  strings.ToLower(strings.Replace(bot.Name, " ", "_", -1)),
 		IsBot:     true,
 	}
+	var migrationRows = make([]*modelnew.MigrationRow, 0, len(bot.IDs))
+	for _, id := range bot.IDs {
+		migrationRows = append(migrationRows, &modelnew.MigrationRow{
+			ID:         uuid.New(),
+			EntityType: modelnew.EntityTypeBotContact,
+			OldID:      strconv.Itoa(id),
+			NewID:      res.ID,
+			DomainID:   bot.DC,
+		})
+	}
+
+	return res, migrationRows
 }

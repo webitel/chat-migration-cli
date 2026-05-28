@@ -16,6 +16,7 @@ type DB struct {
 	threadDialogStore *ThreadDialogStore
 	migrationStore    *MigrationStore
 	messageStore      *MessageStore
+	providerStore     *ProviderStore
 }
 
 func New(pool *pgxpool.Pool) (*DB, error) {
@@ -68,7 +69,7 @@ func (db *DB) initializeMigrationTable(ctx context.Context) error {
 	extra_key TEXT
 );
 
-	CREATE UNIQUE INDEX IF NOT EXISTS chat_migration_entity_old_id_uindex ON public.chat_migration (entity_type, old_id, domain_id);
+	CREATE UNIQUE INDEX IF NOT EXISTS chat_migration_entity_old_id_uindex ON public.chat_migration (entity_type, old_id, domain_id, extra_key);
 	CREATE INDEX IF NOT EXISTS chat_migration_new_id_index ON public.chat_migration (new_id);
 
 	CREATE TABLE IF NOT EXISTS public.chat_migration_step(
@@ -91,4 +92,11 @@ func (db *DB) ThreadDialogStore() *ThreadDialogStore {
 		db.threadDialogStore = &ThreadDialogStore{store: db}
 	}
 	return db.threadDialogStore
+}
+
+func (db *DB) ProviderStore() *ProviderStore {
+	if db.providerStore == nil {
+		db.providerStore = NewProviderStore(db)
+	}
+	return db.providerStore
 }
