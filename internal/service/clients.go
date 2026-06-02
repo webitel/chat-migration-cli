@@ -36,13 +36,24 @@ func (c *Converter) MigrateClientsToContacts(ctx context.Context) error {
 			converted := convertClientToContact(client)
 			contacts = append(contacts, converted...)
 			for _, contact := range converted {
+				contactID := uuid.New()
 				migrationRows = append(migrationRows, &modelnew.MigrationRow{
-					ID:         uuid.New(),
+					ID:         contactID,
 					EntityType: modelnew.EntityTypeClientContact,
 					OldID:      strconv.Itoa(int(client.ID)),
 					NewID:      contact.ID,
 					DomainID:   contact.DomainID,
 				})
+				for _, gateway := range client.Gateways {
+					migrationRows = append(migrationRows, &modelnew.MigrationRow{
+						ID:         uuid.New(),
+						EntityType: modelnew.EntityTypeGatewayToContact,
+						OldID:      strconv.Itoa(int(gateway)),
+						NewID:      contactID,
+						DomainID:   contact.DomainID,
+					})
+				}
+
 			}
 		}
 		if err := c.newDB.ContactStore().InsertContacts(ctx, tx, contacts); err != nil {

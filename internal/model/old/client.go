@@ -12,4 +12,5 @@ type Client struct {
 	LastName   *string   `db:"last_name"`
 	Type       string    `db:"type"`
 	DomainIDs  []int     `db:"domain_ids"`
+	Gateways   []int     `db:"gateways"`
 }

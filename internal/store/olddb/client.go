@@ -17,8 +17,25 @@ func NewClientStore(db *DB) *ClientStore {
 
 func (s *ClientStore) Get(ctx context.Context, offset int, limit int) ([]*old.Client, error) {
 	var (
-		query = `SELECT id, name, number, created_at, external_id, first_name, last_name, COALESCE(type, 'webchat') type, domains.domains domain_ids FROM chat.client c LEFT JOIN LATERAL (
-    SELECT ARRAY_AGG(DISTINCT domain_id) domains FROM chat.channel ch where ch.user_id = c.id ) domains ON true`
+		query = `SELECT
+    id,
+       name,
+       number,
+       created_at,
+       external_id,
+       first_name,
+       last_name,
+       COALESCE(type, 'webchat') type,
+       channels.domains           domain_ids,
+       channels.gateways              gateways
+FROM chat.client c
+         LEFT JOIN LATERAL (
+    SELECT ARRAY_AGG(DISTINCT ch.domain_id) domains, ARRAY_AGG(DISTINCT ch.connection::bigint) gateways
+    FROM chat.channel ch
+    WHERE ch.user_id = c.id AND NOT ch.internal
+             ) channels ON true
+WHERE channels.domains IS NOT NULL
+AND type != 'portal';`
 	)
 	if offset < 0 {
 		offset = 0

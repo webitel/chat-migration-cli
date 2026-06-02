@@ -12,6 +12,9 @@ const (
 	EntityTypeBotChannelThreadDialog       EntityType = "bot_channel_thread_dialog"
 	EntityTypeInternalChannelThreadDialog  EntityType = "internal_channel_thread_dialog"
 	EntityTypeMessage                      EntityType = "message"
+	EntityTypeGatewayToContact             EntityType = "gateway_to_contact"
+	EntityTypeProviderToGateway            EntityType = "provider_to_gateway"
+	EntityTypeProviderToMetaApp            EntityType = "provider_to_meta_app"
 )
 
 type MigrationRowFilters struct {

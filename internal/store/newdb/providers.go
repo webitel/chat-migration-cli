@@ -19,6 +19,32 @@ func NewProviderStore(db *DB) *ProviderStore {
 // -------------------------
 // MetaApp
 // -------------------------
+//
+//
+
+func (s *ProviderStore) InsertGates(ctx context.Context, tx pgx.Tx, gates []*new.Gate) error {
+	query := squirrel.Insert("im_provider.gates").Columns("id", "dc", "name", "type", "enabled", "created_at", "updated_at")
+
+	for _, gate := range gates {
+		query = query.Values(
+			gate.ID,
+			gate.DC,
+			gate.Name,
+			gate.Type,
+			gate.Enabled,
+			gate.CreatedAt,
+			gate.UpdatedAt,
+		)
+	}
+
+	sql, args, err := query.ToSql()
+	if err != nil {
+		return err
+	}
+
+	_, err = tx.Exec(ctx, sql, args...)
+	return err
+}
 
 func (s *ProviderStore) InsertMetaApps(ctx context.Context, tx pgx.Tx, apps []*new.MetaApp) error {
 	query := squirrel.Insert("im_provider.meta_apps").Columns(
@@ -127,6 +153,8 @@ func (s *ProviderStore) InsertFacebooks(ctx context.Context, tx pgx.Tx, pages []
 // -------------------------
 // Bot
 // -------------------------
+//
+//
 
 func (s *ProviderStore) InsertBots(ctx context.Context, tx pgx.Tx, bots []*new.Bot) error {
 	query := squirrel.Insert("im_provider.bots").Columns(

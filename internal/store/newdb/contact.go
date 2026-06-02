@@ -119,6 +119,27 @@ func (s *ContactStore) InsertContactsIgnoreConflicts(ctx context.Context, tx pgx
 
 }
 
+func (s *ContactStore) SyncContactVias(ctx context.Context, tx pgx.Tx) error {
+	query := `WITH chain AS (SELECT ct.new_id contact_id, gt.new_id gate_id
+               FROM public.chat_migration ct
+                        LEFT JOIN public.chat_migration gt
+                                  ON gt.old_id = ct.old_id AND gt.entity_type = 'provider_to_gateway' AND
+                                     ct.domain_id = gt.domain_id
+               WHERE ct.entity_type = 'gateway_to_contact')
+
+INSERT
+INTO im_contact.via(contact_id, via)
+SELECT contact_id, gate_id
+FROM chain
+ON CONFLICT (contact_id, via) DO NOTHING;
+`
+	_, err := tx.Exec(ctx, query)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
 func (s *ContactStore) GetByWebitelUserIDs(ctx context.Context, tx pgx.Tx, webitelUserIDs []string) ([]*new.Contact, error) {
 	if len(webitelUserIDs) == 0 {
 		return nil, nil

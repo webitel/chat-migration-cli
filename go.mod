@@ -9,6 +9,8 @@ require (
 	github.com/spf13/viper v1.21.0
 )
 
+require google.golang.org/protobuf v1.36.11 // indirect
+
 require (
 	github.com/fsnotify/fsnotify v1.9.0 // indirect
 	github.com/go-viper/mapstructure/v2 v2.4.0 // indirect

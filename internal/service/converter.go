@@ -17,6 +17,10 @@ const (
 	StepConversations     = "conversations"
 	StepMembers           = "members"
 	StepMessages          = "messages"
+	StepGateways          = "gateways"
+
+	StepFacebookAndWhatsApp = "facebook_and_whatsapp"
+	StepSyncContactVias     = "sync_contact_vias"
 )
 
 type Resolver struct {
@@ -152,6 +156,8 @@ func (c *Converter) getMigrationSteps() []MigrationStep {
 		{Name: StepConversations, Run: c.MigrateConversations},
 		{Name: StepMembers, Run: c.MigrateMembers},
 		{Name: StepMessages, Run: c.MigrateMessages},
+		{Name: StepFacebookAndWhatsApp, Run: c.MigrateFacebookProviders},
+		{Name: StepSyncContactVias, Run: c.SyncContactsVias},
 	}
 }
 
