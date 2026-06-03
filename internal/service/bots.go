@@ -12,6 +12,7 @@ import (
 
 const BotIssuerID = "schema"
 
+// NOTE: MigrationRow old_id = flow_id, new_id = contact_id
 func (c *Converter) MigrateBotsToContacts(ctx context.Context) error {
 	var (
 		perPage = 1000
@@ -36,9 +37,9 @@ func (c *Converter) MigrateBotsToContacts(ctx context.Context) error {
 			migrationRows []*modelnew.MigrationRow
 		)
 		for _, bot := range bots {
-			converted, migrations := convertBotToContact(bot)
+			converted, migrationRow := convertBotToContact(bot)
 			contacts = append(contacts, converted)
-			migrationRows = append(migrationRows, migrations...)
+			migrationRows = append(migrationRows, migrationRow)
 		}
 		if err := c.newDB.ContactStore().InsertContacts(ctx, tx, contacts); err != nil {
 			return false, err
@@ -55,7 +56,7 @@ func (c *Converter) MigrateBotsToContacts(ctx context.Context) error {
 	return tx.Commit(ctx)
 }
 
-func convertBotToContact(bot *old.Bot) (*modelnew.Contact, []*modelnew.MigrationRow) {
+func convertBotToContact(bot *old.Bot) (*modelnew.Contact, *modelnew.MigrationRow) {
 	res := &modelnew.Contact{
 		BaseModel: modelnew.BaseModel{
 			ID:        uuid.New(),
@@ -70,16 +71,13 @@ func convertBotToContact(bot *old.Bot) (*modelnew.Contact, []*modelnew.Migration
 		Username:  strings.ToLower(strings.Replace(bot.Name, " ", "_", -1)),
 		IsBot:     true,
 	}
-	var migrationRows = make([]*modelnew.MigrationRow, 0, len(bot.IDs))
-	for _, id := range bot.IDs {
-		migrationRows = append(migrationRows, &modelnew.MigrationRow{
-			ID:         uuid.New(),
-			EntityType: modelnew.EntityTypeBotContact,
-			OldID:      strconv.Itoa(id),
-			NewID:      res.ID,
-			DomainID:   bot.DC,
-		})
+	migrationRow := &modelnew.MigrationRow{
+		ID:         uuid.New(),
+		EntityType: modelnew.EntityTypeBotContact,
+		OldID:      strconv.Itoa(bot.FlowID),
+		NewID:      res.ID,
+		DomainID:   bot.DC,
 	}
 
-	return res, migrationRows
+	return res, migrationRow
 }

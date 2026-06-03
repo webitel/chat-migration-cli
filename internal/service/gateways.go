@@ -231,7 +231,7 @@ func (c *Converter) buildGate(provider *modelold.Provider[modelold.FBProviderMet
 	gate := &modelnew.Gate{
 		ID:        gateID,
 		DC:        int64(provider.DC),
-		Name:      provider.Name,
+		Name:      fmt.Sprintf("%s (%s)", provider.Name, providerType),
 		Enabled:   provider.Enabled,
 		CreatedAt: provider.CreatedAt,
 		UpdatedAt: provider.UpdatedAt,
