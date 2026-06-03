@@ -32,10 +32,10 @@ FROM chat.client c
          LEFT JOIN LATERAL (
     SELECT ARRAY_AGG(DISTINCT ch.domain_id) domains, ARRAY_AGG(DISTINCT ch.connection::bigint) gateways
     FROM chat.channel ch
-    WHERE ch.user_id = c.id AND NOT ch.internal
+    WHERE ch.user_id = c.id AND NOT ch.internal AND ch.connection IS NOT NULL
              ) channels ON true
 WHERE channels.domains IS NOT NULL
-AND type != 'portal';`
+AND type != 'portal'`
 	)
 	if offset < 0 {
 		offset = 0

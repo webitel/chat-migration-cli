@@ -11,6 +11,7 @@ import (
 
 func (c *Converter) MigrateConversations(ctx context.Context) error {
 	const perPage = 1000
+	c.log.Debug("starting conversations migration")
 
 	tx, err := c.newDB.Pool().Begin(ctx)
 	if err != nil {
@@ -27,6 +28,7 @@ func (c *Converter) MigrateConversations(ctx context.Context) error {
 		if len(groupedConversations) == 0 {
 			break
 		}
+		c.log.Debug("conversations page fetched", "lastInitiator", lastInitiator, "lastFlowID", lastFlowID, "count", len(groupedConversations))
 
 		var (
 			threads       []*modelnew.Thread

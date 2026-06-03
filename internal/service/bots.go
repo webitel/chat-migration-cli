@@ -16,6 +16,7 @@ func (c *Converter) MigrateBotsToContacts(ctx context.Context) error {
 	var (
 		perPage = 1000
 	)
+	c.log.Debug("starting bots-to-contacts migration")
 	tx, err := c.newDB.Pool().Begin(ctx)
 	if err != nil {
 		return err
@@ -29,6 +30,7 @@ func (c *Converter) MigrateBotsToContacts(ctx context.Context) error {
 		if len(bots) < limit {
 			iterate = false
 		}
+		c.log.Debug("bots page fetched", "offset", offset, "count", len(bots))
 		var (
 			contacts      []*modelnew.Contact
 			migrationRows []*modelnew.MigrationRow

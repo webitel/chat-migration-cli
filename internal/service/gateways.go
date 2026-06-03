@@ -24,6 +24,7 @@ func (c *Converter) MigrateFacebookProviders(ctx context.Context) error {
 	var (
 		perPage = 1000
 	)
+	c.log.Debug("starting facebook/whatsapp providers migration")
 	tx, err := c.newDB.Pool().Begin(ctx)
 	if err != nil {
 		return err
@@ -37,6 +38,7 @@ func (c *Converter) MigrateFacebookProviders(ctx context.Context) error {
 		if len(providers) < limit {
 			iterate = false
 		}
+		c.log.Debug("providers page fetched", "offset", offset, "count", len(providers))
 		appsOldNewMap, gatesOldNewMap, err := c.BuildMetaGates(providers)
 		if err != nil {
 			return false, err
@@ -124,7 +126,7 @@ func (c *Converter) BuildMetaGates(providers []*modelold.Provider[modelold.FBPro
 		gates := []*modelnew.Gate{}
 		metadata := provider.Metadata
 		if metadata == nil {
-			c.log.Warn("metadata is nil", slog.Int("facebook_provider", provider.ID))
+			c.log.Warn("metadata is nil", slog.Int("provider_id", provider.ID))
 			continue
 		}
 		metaApp := &modelnew.MetaApp{
@@ -160,6 +162,10 @@ func (c *Converter) BuildMetaGates(providers []*modelold.Provider[modelold.FBPro
 				"instagram_basic",
 				"instagram_manage_messages",
 			)
+		}
+		if len(metaApp.Scopes) == 0 {
+			slog.Warn("provider %d has no scopes, skipping", slog.Int("provider_id", provider.ID))
+			continue
 		}
 
 		resultGates[provider.ID] = gates
@@ -209,6 +215,7 @@ func (c *Converter) BuildWAGates(metaApp *modelnew.MetaApp, provider *modelold.P
 			return nil, err
 		}
 		account.MetaAppID = metaApp.ID
+		account.ID = gate.ID
 		gate.WhatsAppAccount = account
 		gates = append(gates, gate)
 	}
@@ -306,9 +313,8 @@ type BusinessAccount struct {
 func (c *Converter) fetchAccounts(waToken, waEncoded string) ([]*BusinessAccount, error) {
 	wabaIDs, err := decodeWABAIDs(waEncoded)
 	if err != nil {
-		panic(err)
+		return nil, err
 	}
-	fmt.Println("WABA IDs:", wabaIDs)
 
 	accounts, err := fetchAccounts(waToken, wabaIDs)
 	if err != nil {

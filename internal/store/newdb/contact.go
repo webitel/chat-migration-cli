@@ -125,7 +125,7 @@ func (s *ContactStore) SyncContactVias(ctx context.Context, tx pgx.Tx) error {
                         LEFT JOIN public.chat_migration gt
                                   ON gt.old_id = ct.old_id AND gt.entity_type = 'provider_to_gateway' AND
                                      ct.domain_id = gt.domain_id
-               WHERE ct.entity_type = 'gateway_to_contact')
+               WHERE ct.entity_type = 'gateway_to_contact' AND gt.new_id IS NOT NULL)
 
 INSERT
 INTO im_contact.via(contact_id, via)

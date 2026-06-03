@@ -2,9 +2,11 @@ package olddb
 
 import (
 	"context"
+	"encoding/base64"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/webitel/chat-migration-cli/internal/model/old"
+	protomodel "github.com/webitel/chat-migration-cli/internal/model/old/proto"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -52,14 +54,14 @@ GROUP BY
 }
 
 type facebookGatewayMetadata struct {
-	FB           []byte `json:"fb"`
+	FB           string `json:"fb"`
 	ClientID     string `json:"client_id"`
 	ClientSecret string `json:"client_secret"`
 
-	IG                     []byte `json:"ig"`
-	InstagramComments      bool   `json:"instagram_comments"`
-	InstagramMentions      bool   `json:"instagram_mentions"`
-	InstagramStoryMentions bool   `json:"instagram_story_mentions"`
+	IG                     string `json:"ig"`
+	InstagramComments      string `json:"instagram_comments"`
+	InstagramMentions      string `json:"instagram_mentions"`
+	InstagramStoryMentions string `json:"instagram_story_mentions"`
 
 	WA            string `json:"wa"`
 	WhatsAppToken string `json:"whatsapp_token"`
@@ -108,22 +110,24 @@ WHERE provider = 'messenger'`
 		}
 		if gateway.Metadata != nil {
 			metaGateway.Metadata = &old.FBProviderMetadata{
-				ClientID:               gateway.Metadata.ClientID,
-				ClientSecret:           gateway.Metadata.ClientSecret,
-				InstagramComments:      gateway.Metadata.InstagramComments,
-				InstagramMentions:      gateway.Metadata.InstagramMentions,
-				InstagramStoryMentions: gateway.Metadata.InstagramStoryMentions,
-				WA:                     gateway.Metadata.WA,
-				WhatsAppToken:          gateway.Metadata.WhatsAppToken,
-				Version:                gateway.Metadata.Version,
+				ClientID:     gateway.Metadata.ClientID,
+				ClientSecret: gateway.Metadata.ClientSecret,
+				// InstagramComments:      gateway.Metadata.InstagramComments,
+				// InstagramMentions:      gateway.Metadata.InstagramMentions,
+				// InstagramStoryMentions: gateway.Metadata.InstagramStoryMentions,
+				WA:            gateway.Metadata.WA,
+				WhatsAppToken: gateway.Metadata.WhatsAppToken,
+				Version:       gateway.Metadata.Version,
 			}
-			if gateway.Metadata.FB != nil {
-				if err := proto.Unmarshal(gateway.Metadata.FB, metaGateway.Metadata.FB); err != nil {
+			if gateway.Metadata.FB != "" {
+				metaGateway.Metadata.FB, err = decodeFB(gateway.Metadata.FB)
+				if err != nil {
 					return nil, err
 				}
 			}
-			if gateway.Metadata.IG != nil {
-				if err := proto.Unmarshal(gateway.Metadata.IG, metaGateway.Metadata.IG); err != nil {
+			if gateway.Metadata.IG != "" {
+				metaGateway.Metadata.IG, err = decodeFB(gateway.Metadata.IG)
+				if err != nil {
 					return nil, err
 				}
 			}
@@ -132,4 +136,16 @@ WHERE provider = 'messenger'`
 	}
 
 	return res, nil
+}
+
+func decodeFB(fbEncoded string) (*protomodel.Messenger, error) {
+	data, err := base64.RawURLEncoding.DecodeString(fbEncoded)
+	if err != nil {
+		return nil, err
+	}
+	var msg protomodel.Messenger
+	if err := proto.Unmarshal(data, &msg); err != nil {
+		return nil, err
+	}
+	return &msg, nil
 }

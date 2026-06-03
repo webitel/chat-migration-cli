@@ -15,6 +15,7 @@ func (c *Converter) MigrateClientsToContacts(ctx context.Context) error {
 	var (
 		perPage = 1000
 	)
+	c.log.Debug("starting clients-to-contacts migration")
 	tx, err := c.newDB.Pool().Begin(ctx)
 	if err != nil {
 		return err
@@ -28,6 +29,7 @@ func (c *Converter) MigrateClientsToContacts(ctx context.Context) error {
 		if len(clients) < limit {
 			iterate = false
 		}
+		c.log.Debug("clients page fetched", "offset", offset, "count", len(clients))
 		var (
 			contacts      []*modelnew.Contact
 			migrationRows []*modelnew.MigrationRow
@@ -36,9 +38,8 @@ func (c *Converter) MigrateClientsToContacts(ctx context.Context) error {
 			converted := convertClientToContact(client)
 			contacts = append(contacts, converted...)
 			for _, contact := range converted {
-				contactID := uuid.New()
 				migrationRows = append(migrationRows, &modelnew.MigrationRow{
-					ID:         contactID,
+					ID:         uuid.New(),
 					EntityType: modelnew.EntityTypeClientContact,
 					OldID:      strconv.Itoa(int(client.ID)),
 					NewID:      contact.ID,
@@ -49,7 +50,7 @@ func (c *Converter) MigrateClientsToContacts(ctx context.Context) error {
 						ID:         uuid.New(),
 						EntityType: modelnew.EntityTypeGatewayToContact,
 						OldID:      strconv.Itoa(int(gateway)),
-						NewID:      contactID,
+						NewID:      contact.ID,
 						DomainID:   contact.DomainID,
 					})
 				}

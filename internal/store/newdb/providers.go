@@ -23,7 +23,8 @@ func NewProviderStore(db *DB) *ProviderStore {
 //
 
 func (s *ProviderStore) InsertGates(ctx context.Context, tx pgx.Tx, gates []*new.Gate) error {
-	query := squirrel.Insert("im_provider.gates").Columns("id", "dc", "name", "type", "enabled", "created_at", "updated_at")
+	query := squirrel.Insert("im_provider.gates").
+		Columns("id", "dc", "name", "type", "enabled", "created_at", "updated_at").PlaceholderFormat(squirrel.Dollar)
 
 	for _, gate := range gates {
 		query = query.Values(

@@ -38,6 +38,7 @@ func (c *Converter) MigrateMembers(ctx context.Context) error {
 		if len(groupedConversations) == 0 {
 			break
 		}
+		c.log.Debug("members page fetched", "lastInitiator", lastInitiator, "lastFlowID", lastFlowID, "count", len(groupedConversations))
 		for _, groupedConv := range groupedConversations {
 			if len(groupedConv.ConvIDs) == 0 {
 				c.log.Warn("grouped conversation has no conv IDs, skipping",

@@ -69,7 +69,7 @@ func (db *DB) initializeMigrationTable(ctx context.Context) error {
 	extra_key TEXT
 );
 
-	CREATE UNIQUE INDEX IF NOT EXISTS chat_migration_entity_old_id_uindex ON public.chat_migration (entity_type, old_id, domain_id, extra_key);
+	CREATE UNIQUE INDEX IF NOT EXISTS chat_migration_entity_old_id_uindex ON public.chat_migration (entity_type, old_id, domain_id, new_id, extra_key);
 	CREATE INDEX IF NOT EXISTS chat_migration_new_id_index ON public.chat_migration (new_id);
 
 	CREATE TABLE IF NOT EXISTS public.chat_migration_step(
