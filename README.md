@@ -15,6 +15,8 @@ Migration runs as an ordered sequence of steps. Each step is idempotent and resu
 | 3 | `conversations` | Groups legacy conversations by `(initiator, flow)` and creates chat threads |
 | 4 | `members` | Creates thread dialog members for all participants |
 | 5 | `messages` | Migrates all messages, file attachments and interactive content |
+| 6 | `facebook_and_whatsapp` | Migrates Facebook and WhatsApp provider configs to gates and Meta apps. Makes outbound HTTP calls to the Meta Graph API to resolve WhatsApp Business Account phone numbers |
+| 7 | `sync_contact_vias` | Syncs contact communication channels (vias) after all contacts and providers are in place |
 
 Steps that have already completed are skipped automatically on re-runs. Use `MIGRATION_START_FROM_STEP` to resume from a specific step.
 
@@ -57,6 +59,13 @@ MIGRATION_LOG_LEVEL=debug \
 MIGRATION_LOG_JSON=true \
 ...
 ```
+
+## Prerequisites
+
+- Go 1.25+
+- Network access to `https://graph.facebook.com` is required during the `facebook_and_whatsapp` step to resolve WhatsApp Business Account phone numbers from the Meta Graph API.
+
+The tool auto-creates two tracking tables (`chat_migration` and `chat_migration_step`) in the new database on first run — no manual schema preparation is needed.
 
 ## Building
 
