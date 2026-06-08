@@ -45,10 +45,11 @@ func (r *Resolver) ResolveMigrationRows(ctx context.Context, tx pgx.Tx, filters 
 }
 
 type Converter struct {
-	log      *slog.Logger
-	oldDB    *olddb.DB
-	newDB    *newdb.DB
-	resolver *Resolver
+	log       *slog.Logger
+	oldDB     *olddb.DB
+	newDB     *newdb.DB
+	resolver  *Resolver
+	encryptor *Encryptor
 }
 
 type MigrationStep struct {
@@ -56,12 +57,13 @@ type MigrationStep struct {
 	Run  func(ctx context.Context) error
 }
 
-func NewConverter(oldDB *olddb.DB, modelnewDB *newdb.DB) *Converter {
+func NewConverter(oldDB *olddb.DB, modelnewDB *newdb.DB, encryptor *Encryptor) *Converter {
 	return &Converter{
-		log:      slog.Default(),
-		oldDB:    oldDB,
-		newDB:    modelnewDB,
-		resolver: NewResolver(modelnewDB),
+		log:       slog.Default(),
+		oldDB:     oldDB,
+		newDB:     modelnewDB,
+		resolver:  NewResolver(modelnewDB),
+		encryptor: encryptor,
 	}
 }
 

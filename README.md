@@ -37,8 +37,11 @@ All options are read from environment variables prefixed with `MIGRATION_`.
 | `MIGRATION_START_FROM_STEP` | no | _(all)_ | Start from this step, skipping earlier ones |
 | `MIGRATION_LOG_LEVEL` | no | `info` | Log verbosity: `debug`, `info`, `warn`, `error` |
 | `MIGRATION_LOG_JSON` | no | `false` | Emit structured JSON logs instead of text |
+| `MIGRATION_ENCRYPTION_KEY` | yes | — | 32-byte AES-256 key used to encrypt provider tokens at rest |
 
 DSN format: `postgres://user:password@host:5432/dbname?sslmode=disable`
+
+`MIGRATION_ENCRYPTION_KEY` must be exactly 32 characters (256 bits). Tokens stored in the new database (Facebook page access tokens and WhatsApp Business access tokens) are encrypted with AES-256-GCM using this key.
 
 ## Usage
 
@@ -46,11 +49,13 @@ DSN format: `postgres://user:password@host:5432/dbname?sslmode=disable`
 # Full migration
 MIGRATION_OLD_DB_DSN="postgres://..." \
 MIGRATION_NEW_DB_DSN="postgres://..." \
+MIGRATION_ENCRYPTION_KEY="<32-character-key>" \
 ./chat-migration-cli
 
 # Resume from a specific step
 MIGRATION_OLD_DB_DSN="postgres://..." \
 MIGRATION_NEW_DB_DSN="postgres://..." \
+MIGRATION_ENCRYPTION_KEY="<32-character-key>" \
 MIGRATION_START_FROM_STEP=messages \
 ./chat-migration-cli
 

@@ -266,9 +266,13 @@ func (c *Converter) convertToFacebookPages(fb *proto.Messenger) ([]*modelnew.Fac
 		if len(page.Accounts) == 0 {
 			continue
 		}
+		encryptedToken, err := c.encryptor.EncryptToken(page.Accounts[0].AccessToken)
+		if err != nil {
+			return nil, fmt.Errorf("encrypt facebook page token: %w", err)
+		}
 		pages = append(pages, &modelnew.Facebook{
 			PageID:    page.Id,
-			PageToken: page.Accounts[0].AccessToken,
+			PageToken: encryptedToken,
 		})
 
 	}
@@ -280,6 +284,10 @@ func (c *Converter) convertToWABAAccounts(token, encoded string) ([]*modelnew.Ga
 	if err != nil {
 		return nil, err
 	}
+	encryptedToken, err := c.encryptor.EncryptToken(token)
+	if err != nil {
+		return nil, fmt.Errorf("encrypt whatsapp access token: %w", err)
+	}
 	var result []*modelnew.GateWABA
 	for _, account := range accounts {
 		for _, number := range account.PhoneNumbers.Data {
@@ -287,7 +295,7 @@ func (c *Converter) convertToWABAAccounts(token, encoded string) ([]*modelnew.Ga
 				ID:                   uuid.New(),
 				PhoneNumber:          number.PhoneNumber,
 				PhoneNumberID:        number.ID,
-				AccessToken:          []byte(token),
+				AccessToken:          []byte(encryptedToken),
 				AccessTokenExpiresAt: nil,
 				BusinessID:           account.ID,
 			})
