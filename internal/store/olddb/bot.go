@@ -3,6 +3,7 @@ package olddb
 import (
 	"context"
 	"encoding/base64"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/webitel/chat-migration-cli/internal/model/old"
@@ -29,7 +30,8 @@ func (s *BotStore) Get(ctx context.Context, offset int, limit int) ([]*old.Bot, 
 FROM chat.bot
 WHERE flow_id IS NOT NULL
 GROUP BY
-    flow_id, dc`
+    flow_id, dc
+    OFFSET $1 LIMIT $2`
 	)
 	if offset < 0 {
 		offset = 0
@@ -37,9 +39,44 @@ GROUP BY
 	if limit < 1 {
 		limit = 1
 	}
-	query += ` OFFSET $1 LIMIT $2`
 
 	rows, err := s.db.Pool().Query(ctx, query, offset, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	res, err := pgx.CollectRows(rows, pgx.RowToAddrOfStructByName[old.Bot])
+	if err != nil {
+		return nil, err
+	}
+
+	return res, nil
+}
+
+func (s *BotStore) GetFromDate(ctx context.Context, offset int, limit int, from *time.Time) ([]*old.Bot, error) {
+	var (
+		query = `SELECT ARRAY_AGG(id) ids,
+       dc,
+       STRING_AGG(name, ',') name,
+       flow_id,
+       MIN(created_at) created_at,
+       MAX(updated_at) updated_at
+FROM chat.bot
+WHERE flow_id IS NOT NULL
+AND ($3 IS NULL OR created_at >= $3)
+GROUP BY
+    flow_id, dc
+    OFFSET $1 LIMIT $2`
+	)
+	if offset < 0 {
+		offset = 0
+	}
+	if limit < 1 {
+		limit = 1
+	}
+
+	rows, err := s.db.Pool().Query(ctx, query, offset, limit, from)
 	if err != nil {
 		return nil, err
 	}
@@ -138,6 +175,74 @@ WHERE provider = 'messenger'`
 	return res, nil
 }
 
+func (s *BotStore) GetMetaGatewaysFromDate(ctx context.Context, offset int, limit int, from time.Time) ([]*old.Provider[old.FBProviderMetadata], error) {
+	var (
+		query = `SELECT id, dc, uri, name, flow_id, enabled,
+       metadata, created_at, updated_at, updates
+FROM chat.bot
+WHERE provider = 'messenger' AND created_at >= $1
+OFFSET $2 LIMIT $3`
+	)
+	if offset < 0 {
+		offset = 0
+	}
+	if limit < 1 {
+		limit = 1
+	}
+
+	rows, err := s.db.Pool().Query(ctx, query, from, offset, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	internalResult, err := pgx.CollectRows(rows, pgx.RowToAddrOfStructByName[old.Provider[facebookGatewayMetadata]])
+	if err != nil {
+		return nil, err
+	}
+
+	var res []*old.Provider[old.FBProviderMetadata]
+	for _, gateway := range internalResult {
+		metaGateway := &old.Provider[old.FBProviderMetadata]{
+			ID:        gateway.ID,
+			DC:        gateway.DC,
+			URI:       gateway.URI,
+			Name:      gateway.Name,
+			FlowID:    gateway.FlowID,
+			Enabled:   gateway.Enabled,
+			CreatedAt: gateway.CreatedAt,
+			UpdatedAt: gateway.UpdatedAt,
+			Updates:   gateway.Updates,
+		}
+		if gateway.Metadata != nil {
+			metaGateway.Metadata = &old.FBProviderMetadata{
+				ClientID:     gateway.Metadata.ClientID,
+				ClientSecret: gateway.Metadata.ClientSecret,
+				// InstagramComments:      gateway.Metadata.InstagramComments,
+				// InstagramMentions:      gateway.Metadata.InstagramMentions,
+				// InstagramStoryMentions: gateway.Metadata.InstagramStoryMentions,
+				WA:            gateway.Metadata.WA,
+				WhatsAppToken: gateway.Metadata.WhatsAppToken,
+				Version:       gateway.Metadata.Version,
+			}
+			if gateway.Metadata.FB != "" {
+				metaGateway.Metadata.FB, err = decodeFB(gateway.Metadata.FB)
+				if err != nil {
+					return nil, err
+				}
+			}
+			if gateway.Metadata.IG != "" {
+				metaGateway.Metadata.IG, err = decodeFB(gateway.Metadata.IG)
+				if err != nil {
+					return nil, err
+				}
+			}
+		}
+		res = append(res, metaGateway)
+	}
+
+	return res, nil
+}
 func decodeFB(fbEncoded string) (*protomodel.Messenger, error) {
 	data, err := base64.RawURLEncoding.DecodeString(fbEncoded)
 	if err != nil {

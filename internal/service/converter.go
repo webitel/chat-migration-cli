@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	modelnew "github.com/webitel/chat-migration-cli/internal/model/new"
@@ -21,6 +22,18 @@ const (
 
 	StepFacebookAndWhatsApp = "facebook_and_whatsapp"
 	StepSyncContactVias     = "sync_contact_vias"
+)
+
+const (
+	SyncStepClientsToContacts = "sync_mode_clients_to_contacts"
+	SyncStepBotsToContacts    = "sync_mode_bots_to_contacts"
+	SyncStepConversations     = "sync_mode_conversations"
+	SyncStepMembers           = "sync_mode_members"
+	SyncStepMessages          = "sync_mode_messages"
+	SyncStepGateways          = "sync_mode_gateways"
+
+	SyncStepFacebookAndWhatsApp = "sync_mode_facebook_and_whatsapp"
+	SyncStepSyncContactVias     = "sync_mode_sync_contact_vias"
 )
 
 type Resolver struct {
@@ -50,6 +63,8 @@ type Converter struct {
 	newDB     *newdb.DB
 	resolver  *Resolver
 	encryptor *Encryptor
+
+	isSyncMode bool
 }
 
 type MigrationStep struct {
@@ -57,13 +72,14 @@ type MigrationStep struct {
 	Run  func(ctx context.Context) error
 }
 
-func NewConverter(oldDB *olddb.DB, modelnewDB *newdb.DB, encryptor *Encryptor) *Converter {
+func NewConverter(oldDB *olddb.DB, modelnewDB *newdb.DB, encryptor *Encryptor, isSyncMode bool) *Converter {
 	return &Converter{
-		log:       slog.Default(),
-		oldDB:     oldDB,
-		newDB:     modelnewDB,
-		resolver:  NewResolver(modelnewDB),
-		encryptor: encryptor,
+		log:        slog.Default(),
+		oldDB:      oldDB,
+		newDB:      modelnewDB,
+		resolver:   NewResolver(modelnewDB),
+		encryptor:  encryptor,
+		isSyncMode: isSyncMode,
 	}
 }
 
@@ -79,11 +95,22 @@ func (c *Converter) runStepsFrom(ctx context.Context, startFrom string) error {
 	if startFrom == "" {
 		return errors.New("step requires to start from it")
 	}
-	steps := c.getMigrationSteps()
+	var (
+		steps     []MigrationStep
+		completed map[string]struct{}
+		err       error
+	)
 
-	completed, err := c.newDB.MigrationStore().GetCompletedSteps(ctx)
-	if err != nil {
-		return err
+	if c.isSyncMode {
+		steps = c.getSyncModeMigrationSteps()
+		completed = make(map[string]struct{})
+
+	} else {
+		steps = c.getMigrationSteps()
+		completed, err = c.newDB.MigrationStore().GetCompletedSteps(ctx)
+		if err != nil {
+			return err
+		}
 	}
 
 	var (
@@ -92,10 +119,12 @@ func (c *Converter) runStepsFrom(ctx context.Context, startFrom string) error {
 	for i, step := range steps {
 		if step.Name == startFrom {
 			if _, alreadyCompleted := completed[step.Name]; alreadyCompleted {
-				for s, nextUncompletedStep := range steps[i-1:] {
-					if _, alreadyCompleted := completed[nextUncompletedStep.Name]; !alreadyCompleted {
-						firstStepIndex = s
-						break
+				if i > 0 {
+					for s, nextUncompletedStep := range steps[i-1:] {
+						if _, alreadyCompleted := completed[nextUncompletedStep.Name]; !alreadyCompleted {
+							firstStepIndex = s
+							break
+						}
 					}
 				}
 			} else {
@@ -125,11 +154,22 @@ func (c *Converter) runStepsFrom(ctx context.Context, startFrom string) error {
 }
 
 func (c *Converter) runSteps(ctx context.Context) error {
-	steps := c.getMigrationSteps()
+	var (
+		steps     []MigrationStep
+		completed map[string]struct{}
+		err       error
+	)
 
-	completed, err := c.newDB.MigrationStore().GetCompletedSteps(ctx)
-	if err != nil {
-		return err
+	if c.isSyncMode {
+		steps = c.getSyncModeMigrationSteps()
+		completed = make(map[string]struct{})
+
+	} else {
+		steps = c.getMigrationSteps()
+		completed, err = c.newDB.MigrationStore().GetCompletedSteps(ctx)
+		if err != nil {
+			return err
+		}
 	}
 
 	for _, step := range steps {
@@ -162,7 +202,52 @@ func (c *Converter) getMigrationSteps() []MigrationStep {
 		{Name: StepSyncContactVias, Run: c.SyncContactsVias},
 	}
 }
+func (c *Converter) getSyncModeMigrationSteps() []MigrationStep {
+	return []MigrationStep{
+		{Name: SyncStepClientsToContacts, Run: c.MigrateClientsToContactsSyncMode},
+		{Name: SyncStepBotsToContacts, Run: c.MigrateBotsToContactsSyncMode},
+		{Name: SyncStepConversations, Run: c.MigrateConversationsSyncMode},
+		{Name: SyncStepMembers, Run: c.MigrateMembersSyncMode},
+		{Name: SyncStepMessages, Run: c.MigrateMessagesSyncMode},
+		{Name: SyncStepFacebookAndWhatsApp, Run: c.MigrateFacebookProvidersSyncMode},
+		{Name: SyncStepSyncContactVias, Run: c.SyncContactsVias},
+	}
+}
 
+var stepNameMap = map[string]string{
+	SyncStepMembers:             StepMembers,
+	SyncStepConversations:       StepConversations,
+	SyncStepBotsToContacts:      StepBotsToContacts,
+	SyncStepClientsToContacts:   StepClientsToContacts,
+	SyncStepFacebookAndWhatsApp: StepFacebookAndWhatsApp,
+	SyncStepMessages:            StepMessages,
+	SyncStepSyncContactVias:     StepSyncContactVias,
+	SyncStepGateways:            StepGateways,
+}
+
+func (c *Converter) GetStepCompletedAtInTx(ctx context.Context, tx pgx.Tx, step string) (time.Time, error) {
+	analogStepName := stepNameMap[step]
+	if analogStepName == "" {
+		analogStepName = step
+	}
+	completedAt, err := c.newDB.MigrationStore().GetStepCompletedAtInTx(ctx, tx, step, analogStepName)
+	if err != nil {
+		return time.Time{}, err
+	}
+	return completedAt, nil
+}
+
+func (c *Converter) GetStepCompletedAt(ctx context.Context, step string) (time.Time, error) {
+	analogStepName := stepNameMap[step]
+	if analogStepName == "" {
+		analogStepName = step
+	}
+	completedAt, err := c.newDB.MigrationStore().GetStepCompletedAt(ctx, step, analogStepName)
+	if err != nil {
+		return time.Time{}, err
+	}
+	return completedAt, nil
+}
 func PagerFunc(ctx context.Context, perPage int, do func(ctx context.Context, offset, limit int) (bool, error)) error {
 	var (
 		limit   = perPage
