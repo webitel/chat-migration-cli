@@ -118,6 +118,111 @@ func (c *Converter) MigrateFacebookProviders(ctx context.Context) error {
 	}
 	return tx.Commit(ctx)
 }
+func (c *Converter) MigrateFacebookProvidersSyncMode(ctx context.Context) error {
+	var (
+		perPage = 1000
+	)
+	c.log.Debug("starting facebook/whatsapp providers migration")
+	tx, err := c.newDB.Pool().Begin(ctx)
+	if err != nil {
+		return err
+	}
+	completedAt, err := c.GetStepCompletedAtInTx(ctx, tx, SyncStepFacebookAndWhatsApp)
+	if err != nil {
+		return err
+	}
+	err = PagerFunc(ctx, perPage, func(ctx context.Context, offset, limit int) (bool, error) {
+		iterate := true
+		providers, err := c.oldDB.BotStore().GetMetaGatewaysFromDate(ctx, offset, limit, completedAt)
+		if err != nil {
+			return false, err
+		}
+		if len(providers) == 0 {
+			return false, nil
+		}
+		if len(providers) < limit {
+			iterate = false
+		}
+		c.log.Debug("providers page fetched", "offset", offset, "count", len(providers))
+		appsOldNewMap, gatesOldNewMap, err := c.BuildMetaGates(providers)
+		if err != nil {
+			return false, err
+		}
+		var (
+			gates []*modelnew.Gate
+			apps  []*modelnew.MetaApp
+			wabas []*modelnew.GateWABA
+			pages []*modelnew.Facebook
+			bots  []*modelnew.Bot
+		)
+		migrationRows := []*modelnew.MigrationRow{}
+		for oldID, providerGates := range gatesOldNewMap {
+			for _, gate := range providerGates {
+				gates = append(gates, gate)
+				if gate.FacebookPage != nil {
+					pages = append(pages, gate.FacebookPage)
+				} else if gate.WhatsAppAccount != nil {
+					wabas = append(wabas, gate.WhatsAppAccount)
+				} else {
+					continue
+				}
+				migrationRows = append(migrationRows,
+					&modelnew.MigrationRow{
+						ID:         uuid.New(),
+						OldID:      strconv.Itoa(oldID),
+						NewID:      gate.ID,
+						DomainID:   int(gate.DC),
+						EntityType: modelnew.EntityTypeProviderToGateway,
+					})
+
+				bots = append(bots, gate.Bot)
+
+			}
+		}
+		for oldID, app := range appsOldNewMap {
+			apps = append(apps, app)
+			migrationRows = append(migrationRows,
+				&modelnew.MigrationRow{
+					ID:         uuid.New(),
+					OldID:      strconv.Itoa(oldID),
+					NewID:      app.ID,
+					DomainID:   app.DomainID,
+					EntityType: modelnew.EntityTypeProviderToMetaApp,
+				})
+		}
+		err = c.newDB.ProviderStore().InsertMetaApps(ctx, tx, apps)
+		if err != nil {
+			return false, err
+		}
+		err = c.newDB.ProviderStore().InsertGates(ctx, tx, gates)
+		if err != nil {
+			return false, err
+		}
+		err = c.newDB.ProviderStore().InsertFacebooks(ctx, tx, pages)
+		if err != nil {
+			return false, err
+		}
+		err = c.newDB.ProviderStore().InsertGateWABAs(ctx, tx, wabas)
+		if err != nil {
+			return false, err
+		}
+		err = c.newDB.ProviderStore().InsertBots(ctx, tx, bots)
+		if err != nil {
+			return false, err
+		}
+		err = c.newDB.MigrationStore().InsertMigrations(ctx, tx, migrationRows)
+		if err != nil {
+			return false, err
+		}
+		return iterate, nil
+	})
+
+	if err != nil {
+		tx.Rollback(ctx)
+		return err
+	}
+	return tx.Commit(ctx)
+}
 
 func (c *Converter) BuildMetaGates(providers []*modelold.Provider[modelold.FBProviderMetadata]) (map[int]*modelnew.MetaApp, map[int][]*modelnew.Gate, error) {
 	resultGates := map[int][]*modelnew.Gate{}

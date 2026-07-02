@@ -25,6 +25,7 @@ type config struct {
 	LogLevel      slog.Level // LOG_LEVEL: debug|info|warn|error (default info)
 	LogJSON       bool       // LOG_JSON: emit JSON instead of text (default false)
 	EncryptionKey string     // required: 32-byte AES-256 key for encrypting tokens
+	Sync          bool       // SYNC mode
 }
 
 func main() {
@@ -65,7 +66,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	converter := service.NewConverter(srcDB, dstDB, encryptor)
+	converter := service.NewConverter(srcDB, dstDB, encryptor, cfg.Sync)
 
 	var runErr error
 	if cfg.StartFrom != "" {
@@ -93,6 +94,7 @@ func mustLoadConfig() config {
 	v.SetDefault("LOG_LEVEL", "info")
 	v.SetDefault("LOG_JSON", false)
 	v.SetDefault("START_FROM_STEP", "")
+	v.SetDefault("SYNC_MODE", false)
 
 	oldDSN := v.GetString("OLD_DB_DSN")
 	newDSN := v.GetString("NEW_DB_DSN")
@@ -124,6 +126,7 @@ func mustLoadConfig() config {
 		LogLevel:      level,
 		LogJSON:       v.GetBool("LOG_JSON"),
 		EncryptionKey: encryptionKey,
+		Sync:          v.GetBool("SYNC_MODE"),
 	}
 }
 

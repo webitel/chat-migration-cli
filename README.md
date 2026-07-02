@@ -1,12 +1,17 @@
 # chat-migration-cli
 
-A one-shot CLI tool that migrates data from the legacy monolithic chat service database to the new microservices database. Both sources are PostgreSQL.
+A CLI tool that migrates data from the legacy monolithic chat service database to the new microservices database. Both sources are PostgreSQL.
+
+The tool supports two modes:
+
+- **Migration mode** (default) — full one-shot migration of all historical data.
+- **Sync mode** — incremental re-run that picks up only records created since the last completed migration step. Safe to run repeatedly without duplicating data.
 
 ## How it works
 
 Migration runs as an ordered sequence of steps. Each step is idempotent and resumable — progress is checkpointed after every page, so a failed or interrupted run can be restarted from where it left off.
 
-### Steps
+### Migration mode steps
 
 | Order | Step | What it does |
 |-------|------|--------------|
@@ -19,6 +24,22 @@ Migration runs as an ordered sequence of steps. Each step is idempotent and resu
 | 7 | `sync_contact_vias` | Syncs contact communication channels (vias) after all contacts and providers are in place |
 
 Steps that have already completed are skipped automatically on re-runs. Use `MIGRATION_START_FROM_STEP` to resume from a specific step.
+
+### Sync mode steps
+
+Sync mode runs a parallel set of steps prefixed with `sync_mode_`. Each step queries the last completion timestamp of its counterpart migration step and fetches only records created after that point.
+
+| Order | Step | What it does |
+|-------|------|--------------|
+| 1 | `sync_mode_clients_to_contacts` | Inserts new clients created since last run; existing records are skipped |
+| 2 | `sync_mode_bots_to_contacts` | Inserts new bots created since last run; existing records are skipped |
+| 3 | `sync_mode_conversations` | Creates threads for new conversations; adds new conversation IDs to existing threads for the same `(initiator, flow)` pair |
+| 4 | `sync_mode_members` | Adds full member set to newly created threads; adds only new internal users to existing threads |
+| 5 | `sync_mode_messages` | Migrates messages from conversations created since last run |
+| 6 | `sync_mode_facebook_and_whatsapp` | Migrates new Facebook and WhatsApp provider configs created since last run |
+| 7 | `sync_mode_sync_contact_vias` | Re-syncs contact communication channels |
+
+On the very first sync run (when no previous migration has completed), the timestamp falls back to the epoch, so all records are processed — equivalent to running a full migration.
 
 ### Pagination
 
@@ -34,6 +55,7 @@ All options are read from environment variables prefixed with `MIGRATION_`.
 | `MIGRATION_NEW_DB_DSN` | yes | — | Postgres DSN for the new microservices database |
 | `MIGRATION_OLD_DB_MAX_CONNS` | no | `5` | Connection pool size for the legacy DB |
 | `MIGRATION_NEW_DB_MAX_CONNS` | no | `10` | Connection pool size for the new DB |
+| `MIGRATION_SYNC_MODE` | no | `false` | Run in sync mode instead of full migration mode |
 | `MIGRATION_START_FROM_STEP` | no | _(all)_ | Start from this step, skipping earlier ones |
 | `MIGRATION_LOG_LEVEL` | no | `info` | Log verbosity: `debug`, `info`, `warn`, `error` |
 | `MIGRATION_LOG_JSON` | no | `false` | Emit structured JSON logs instead of text |
@@ -50,6 +72,13 @@ DSN format: `postgres://user:password@host:5432/dbname?sslmode=disable`
 MIGRATION_OLD_DB_DSN="postgres://..." \
 MIGRATION_NEW_DB_DSN="postgres://..." \
 MIGRATION_ENCRYPTION_KEY="<32-character-key>" \
+./chat-migration-cli
+
+# Incremental sync (safe to run repeatedly)
+MIGRATION_OLD_DB_DSN="postgres://..." \
+MIGRATION_NEW_DB_DSN="postgres://..." \
+MIGRATION_ENCRYPTION_KEY="<32-character-key>" \
+MIGRATION_SYNC_MODE=true \
 ./chat-migration-cli
 
 # Resume from a specific step

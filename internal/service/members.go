@@ -27,8 +27,9 @@ func (c *Converter) MigrateMembers(ctx context.Context) error {
 	var lastInitiator, lastFlowID int
 	for {
 		var (
-			threadDialogs []*modelnew.ThreadDialog
-			migrationRows []*modelnew.MigrationRow
+			threadDialogs  []*modelnew.ThreadDialog
+			migrationRows  []*modelnew.MigrationRow
+			threadSettings []*modelnew.DirectSettings
 		)
 		groupedConversations, err := c.oldDB.ConversationStore().GetGroupedConversationsByUsersAndFlow(ctx, lastInitiator, lastFlowID, perPage)
 		if err != nil {
@@ -52,7 +53,7 @@ func (c *Converter) MigrateMembers(ctx context.Context) error {
 				tx.Rollback(ctx)
 				return errors.Join(errors.New("failed to resolve migration row for conversation thread "+groupedConv.ConvIDs[0].String()), err)
 			}
-			dialogs, rows, err := c.buildThreadDialogsFromConversation(ctx, tx, groupedConv, thread.NewID)
+			dialogs, settings, rows, err := c.buildThreadDialogsFromConversation(ctx, tx, groupedConv, thread.NewID)
 			if err != nil {
 				if errors.Is(err, errInitiatorNotFound) {
 					c.log.Warn("initiator not found, skipping", slog.String("error", err.Error()))
@@ -63,10 +64,15 @@ func (c *Converter) MigrateMembers(ctx context.Context) error {
 			}
 			threadDialogs = append(threadDialogs, dialogs...)
 			migrationRows = append(migrationRows, rows...)
+			threadSettings = append(threadSettings, settings...)
 		}
 		if err := c.newDB.ThreadDialogStore().InsertThreadDialogs(ctx, tx, threadDialogs); err != nil {
 			tx.Rollback(ctx)
 			return errors.Join(errors.New("failed to insert thread dialogs"), err)
+		}
+		if err := c.newDB.DirectSettingsStore().InsertDirectSettings(ctx, tx, threadSettings); err != nil {
+			tx.Rollback(ctx)
+			return errors.Join(errors.New("failed to insert direct settings"), err)
 		}
 		if err := c.newDB.MigrationStore().InsertMigrations(ctx, tx, migrationRows); err != nil {
 			tx.Rollback(ctx)
@@ -82,39 +88,136 @@ func (c *Converter) MigrateMembers(ctx context.Context) error {
 	return tx.Commit(ctx)
 }
 
-func (c *Converter) buildThreadDialogsFromConversation(ctx context.Context, tx pgx.Tx, conversation *old.GroupedConversation, newThreadID uuid.UUID) ([]*modelnew.ThreadDialog, []*modelnew.MigrationRow, error) {
+func (c *Converter) MigrateMembersSyncMode(ctx context.Context) error {
 	var (
-		threadDialogs []*modelnew.ThreadDialog
-		migrationRows []*modelnew.MigrationRow
+		perPage = 1000
+	)
+	c.log.Debug("starting members migration")
+	tx, err := c.newDB.Pool().Begin(ctx)
+	if err != nil {
+		return err
+	}
+
+	completedAt, err := c.GetStepCompletedAtInTx(ctx, tx, SyncStepMembers)
+	if err != nil {
+		tx.Rollback(ctx)
+		return err
+	}
+
+	var lastInitiator, lastFlowID int
+	for {
+		var (
+			threadDialogs  []*modelnew.ThreadDialog
+			threadSettings []*modelnew.DirectSettings
+			migrationRows  []*modelnew.MigrationRow
+		)
+		groupedConversations, err := c.oldDB.ConversationStore().GetGroupedConversationsByUsersAndFlowFromDate(ctx, lastInitiator, lastFlowID, perPage, completedAt)
+		if err != nil {
+			tx.Rollback(ctx)
+			return err
+		}
+		if len(groupedConversations) == 0 {
+			break
+		}
+
+		c.log.Debug("members page fetched", "lastInitiator", lastInitiator, "lastFlowID", lastFlowID, "count", len(groupedConversations))
+
+		for _, groupedConv := range groupedConversations {
+			oldID := buildFlowIDAndInitiatorIdToThreadOldID(groupedConv.FlowID, groupedConv.Initiator)
+			thread, err := c.newDB.MigrationStore().GetMigrationRow(ctx, tx, &modelnew.MigrationRowFilters{
+				OldIDs:   []string{oldID},
+				Type:     []modelnew.EntityType{modelnew.EntityTypeFlowIDAndInitiatorIDToThread},
+				DomainID: groupedConv.DomainID,
+			})
+			if err != nil {
+				tx.Rollback(ctx)
+				return errors.Join(errors.New("failed to resolve migration row for conversation originators pair "+oldID), err)
+			}
+			var (
+				dialogs                []*modelnew.ThreadDialog
+				settings               []*modelnew.DirectSettings
+				rows                   []*modelnew.MigrationRow
+				buildThreadDialogsFunc = c.buildInternalUsersThreadDialogs
+			)
+			if thread.ExtraKey != nil && *thread.ExtraKey == newThreadAfterSyncExtraKey {
+				buildThreadDialogsFunc = c.buildThreadDialogsFromConversation
+			}
+
+			dialogs, settings, rows, err = buildThreadDialogsFunc(ctx, tx, groupedConv, thread.NewID)
+			if err != nil {
+				if errors.Is(err, errInitiatorNotFound) {
+					c.log.Warn("initiator not found, skipping", slog.String("error", err.Error()))
+					continue
+				}
+				tx.Rollback(ctx)
+				return errors.Join(errors.New("failed to build thread dialogs from conversation"), err)
+			}
+			threadDialogs = append(threadDialogs, dialogs...)
+			migrationRows = append(migrationRows, rows...)
+			threadSettings = append(threadSettings, settings...)
+		}
+
+		if err := c.newDB.ThreadDialogStore().InsertThreadDialogs(ctx, tx, threadDialogs); err != nil {
+			tx.Rollback(ctx)
+			return errors.Join(errors.New("failed to insert thread dialogs"), err)
+		}
+
+		if err := c.newDB.DirectSettingsStore().InsertDirectSettings(ctx, tx, threadSettings); err != nil {
+			tx.Rollback(ctx)
+			return errors.Join(errors.New("failed to insert direct settings"), err)
+		}
+
+		if err := c.newDB.MigrationStore().InsertMigrations(ctx, tx, migrationRows); err != nil {
+			tx.Rollback(ctx)
+			return errors.Join(errors.New("failed to insert migration rows for thread dialogs"), err)
+		}
+		if len(groupedConversations) < perPage {
+			break
+		}
+		last := groupedConversations[len(groupedConversations)-1]
+		lastInitiator = last.Initiator
+		lastFlowID = last.FlowID
+	}
+	return tx.Commit(ctx)
+}
+
+func (c *Converter) buildThreadDialogsFromConversation(ctx context.Context, tx pgx.Tx, conversation *old.GroupedConversation, newThreadID uuid.UUID) ([]*modelnew.ThreadDialog, []*modelnew.DirectSettings, []*modelnew.MigrationRow, error) {
+	var (
+		threadDialogs  []*modelnew.ThreadDialog
+		threadSettings []*modelnew.DirectSettings
+		migrationRows  []*modelnew.MigrationRow
 	)
 
-	ownerDialogs, ownerRows, err := c.buildOwnerThreadDialogFromConversation(ctx, tx, conversation, newThreadID)
+	ownerDialogs, ownerSettings, ownerRows, err := c.buildOwnerThreadDialogFromConversation(ctx, tx, conversation, newThreadID)
 	if err != nil {
-		return nil, nil, errors.Join(errors.New("failed to build owner thread dialog from conversation"), err)
+		return nil, nil, nil, errors.Join(errors.New("failed to build owner thread dialog from conversation"), err)
 	}
 
-	dialogs, rows, err := c.buildInternalUsersThreadDialogs(ctx, tx, conversation, newThreadID)
+	dialogs, settings, rows, err := c.buildInternalUsersThreadDialogs(ctx, tx, conversation, newThreadID)
 	if err != nil {
-		return nil, nil, errors.Join(errors.New("failed to build internal users thread dialogs"), err)
+		return nil, nil, nil, errors.Join(errors.New("failed to build internal users thread dialogs"), err)
 	}
 	threadDialogs = append(threadDialogs, dialogs...)
+	threadSettings = append(threadSettings, settings...)
 	migrationRows = append(migrationRows, rows...)
+
 	threadDialogs = append(threadDialogs, ownerDialogs...)
+	threadSettings = append(threadSettings, ownerSettings...)
 	migrationRows = append(migrationRows, ownerRows...)
 
-	return threadDialogs, migrationRows, nil
+	return threadDialogs, threadSettings, migrationRows, nil
 }
 
 var errInitiatorNotFound = errors.New("initiator not found")
 
-func (c *Converter) buildOwnerThreadDialogFromConversation(ctx context.Context, tx pgx.Tx, conversation *old.GroupedConversation, newThreadID uuid.UUID) ([]*modelnew.ThreadDialog, []*modelnew.MigrationRow, error) {
+func (c *Converter) buildOwnerThreadDialogFromConversation(ctx context.Context, tx pgx.Tx, conversation *old.GroupedConversation, newThreadID uuid.UUID) ([]*modelnew.ThreadDialog, []*modelnew.DirectSettings, []*modelnew.MigrationRow, error) {
 	initiatorContact, err := c.resolver.ResolveMigrationRow(ctx, tx, modelnew.EntityTypeClientContact, strconv.Itoa(conversation.Initiator), "", conversation.DomainID)
 	if err != nil {
 		c.log.Error("failed to resolve initiator contact", slog.String("error", err.Error()), slog.Int("initiator", conversation.Initiator), slog.Int("domain_id", conversation.DomainID))
 		if errors.Is(err, sql.ErrNoRows) {
-			return nil, nil, errInitiatorNotFound
+			return nil, nil, nil, errInitiatorNotFound
 		}
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	botContact, err := c.resolver.ResolveMigrationRow(ctx, tx, modelnew.EntityTypeBotContact, strconv.Itoa(conversation.FlowID), "", conversation.DomainID)
 	if err != nil {
@@ -122,10 +225,10 @@ func (c *Converter) buildOwnerThreadDialogFromConversation(ctx context.Context, 
 			botContact, err = c.restoreBotFromConversation(ctx, conversation, tx)
 			if err != nil {
 				c.log.Error("failed to restore bot from conversation", slog.Int("flow_id", conversation.FlowID), slog.Int("domain_id", conversation.DomainID))
-				return nil, nil, errors.Join(errors.New("failed to restore bot from conversation"), err)
+				return nil, nil, nil, errors.Join(errors.New("failed to restore bot from conversation"), err)
 			}
 		}
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 
 	now := time.Now()
@@ -147,8 +250,25 @@ func (c *Converter) buildOwnerThreadDialogFromConversation(ctx context.Context, 
 		CreatedAt:  now,
 		UpdatedAt:  now,
 	}
+	threadSettings := []*modelnew.DirectSettings{
+		{
+			ID:             uuid.New(),
+			ThreadDialogID: initiatorDialog.ID,
+			Title:          conversation.Title,
+			CreatedAt:      now,
+			UpdatedAt:      now,
+		},
+		{
+			ID:             uuid.New(),
+			ThreadDialogID: botDialog.ID,
+			Title:          conversation.Title,
+			CreatedAt:      now,
+			UpdatedAt:      now,
+		},
+	}
 
 	threadDialogs := []*modelnew.ThreadDialog{initiatorDialog, botDialog}
+	newThreadIDStr := newThreadID.String()
 	migrationRows := []*modelnew.MigrationRow{
 		{
 			ID:         uuid.New(),
@@ -156,7 +276,7 @@ func (c *Converter) buildOwnerThreadDialogFromConversation(ctx context.Context, 
 			OldID:      strconv.Itoa(conversation.Initiator),
 			NewID:      initiatorDialog.ID,
 			DomainID:   conversation.DomainID,
-			ExtraKey:   newThreadID.String(),
+			ExtraKey:   &newThreadIDStr,
 		},
 		{
 			ID:         uuid.New(),
@@ -164,11 +284,11 @@ func (c *Converter) buildOwnerThreadDialogFromConversation(ctx context.Context, 
 			OldID:      strconv.Itoa(conversation.FlowID),
 			NewID:      botDialog.ID,
 			DomainID:   conversation.DomainID,
-			ExtraKey:   newThreadID.String(),
+			ExtraKey:   &newThreadIDStr,
 		},
 	}
 
-	return threadDialogs, migrationRows, nil
+	return threadDialogs, threadSettings, migrationRows, nil
 }
 
 func (c *Converter) restoreBotFromConversation(ctx context.Context, conversation *old.GroupedConversation, tx pgx.Tx) (*modelnew.MigrationRow, error) {
@@ -218,18 +338,20 @@ func (c *Converter) restoreBotFromConversation(ctx context.Context, conversation
 	return migrationRow, nil
 }
 
-func (c *Converter) buildInternalUsersThreadDialogs(ctx context.Context, tx pgx.Tx, conversation *old.GroupedConversation, threadID uuid.UUID) ([]*modelnew.ThreadDialog, []*modelnew.MigrationRow, error) {
+func (c *Converter) buildInternalUsersThreadDialogs(ctx context.Context, tx pgx.Tx, conversation *old.GroupedConversation, threadID uuid.UUID) ([]*modelnew.ThreadDialog, []*modelnew.DirectSettings, []*modelnew.MigrationRow, error) {
 	var (
 		threadDialogs  []*modelnew.ThreadDialog
+		threadSettings []*modelnew.DirectSettings
 		migrationRows  []*modelnew.MigrationRow
 		webitelUserIDs []string
+		now            = time.Now()
 	)
 	for _, user := range conversation.InternalUsers {
 		webitelUserIDs = append(webitelUserIDs, strconv.Itoa(user.UserID))
 	}
 	contacts, err := c.newDB.ContactStore().GetByWebitelUserIDs(ctx, tx, webitelUserIDs)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	for _, user := range conversation.InternalUsers {
 		var foundContact *modelnew.Contact
@@ -264,17 +386,26 @@ func (c *Converter) buildInternalUsersThreadDialogs(ctx context.Context, tx pgx.
 			LeaveReason: user.LeaveReason,
 		}
 		threadDialogs = append(threadDialogs, threadDialog)
+
+		threadSettings = append(threadSettings, &modelnew.DirectSettings{
+			ID:             uuid.New(),
+			ThreadDialogID: threadDialog.ID,
+			Title:          conversation.Title,
+			CreatedAt:      now,
+			UpdatedAt:      now,
+		})
+		threadIDStr := threadID.String()
 		migrationRows = append(migrationRows, &modelnew.MigrationRow{
 			ID:         uuid.New(),
 			EntityType: modelnew.EntityTypeInternalChannelThreadDialog,
 			OldID:      strconv.Itoa(user.UserID),
 			NewID:      threadDialog.ID,
 			DomainID:   conversation.DomainID,
-			ExtraKey:   threadID.String(),
+			ExtraKey:   &threadIDStr,
 		})
 	}
 
-	return threadDialogs, migrationRows, nil
+	return threadDialogs, threadSettings, migrationRows, nil
 }
 
 func (c *Converter) restoreWebitelUser(ctx context.Context, tx pgx.Tx, user *old.ConversationUser, threadID uuid.UUID, domainID int) (*modelnew.Contact, error) {

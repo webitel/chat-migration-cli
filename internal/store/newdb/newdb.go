@@ -11,12 +11,13 @@ import (
 type DB struct {
 	pool *pgxpool.Pool
 
-	contactStore      *ContactStore
-	threadStore       *ThreadStore
-	threadDialogStore *ThreadDialogStore
-	migrationStore    *MigrationStore
-	messageStore      *MessageStore
-	providerStore     *ProviderStore
+	contactStore        *ContactStore
+	threadStore         *ThreadStore
+	threadDialogStore   *ThreadDialogStore
+	migrationStore      *MigrationStore
+	messageStore        *MessageStore
+	providerStore       *ProviderStore
+	directSettingsStore *DirectSettingsStore
 }
 
 func New(pool *pgxpool.Pool) (*DB, error) {
@@ -43,6 +44,13 @@ func (db *DB) ThreadStore() *ThreadStore {
 		db.threadStore = NewThreadStore(db)
 	}
 	return db.threadStore
+}
+
+func (db *DB) DirectSettingsStore() *DirectSettingsStore {
+	if db.directSettingsStore == nil {
+		db.directSettingsStore = NewDirectSettingsStore(db)
+	}
+	return db.directSettingsStore
 }
 
 func (db *DB) MigrationStore() *MigrationStore {
@@ -83,6 +91,7 @@ func (db *DB) initializeMigrationTable(ctx context.Context) error {
 	ALTER TABLE public.chat_migration_step ADD COLUMN IF NOT EXISTS page_offset INT NOT NULL DEFAULT 0;
 	ALTER TABLE public.chat_migration_step ADD COLUMN IF NOT EXISTS page_cursor TEXT;
 	ALTER TABLE public.chat_migration_step ADD COLUMN IF NOT EXISTS error TEXT;
+	ALTER TABLE public.chat_migration_step ADD COLUMN IF NOT EXISTS completed_at TIMESTAMP WITH TIME ZONE;
 	`)
 	return err
 }

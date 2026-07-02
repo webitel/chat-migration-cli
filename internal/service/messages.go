@@ -89,6 +89,88 @@ func (c *Converter) MigrateMessages(ctx context.Context) error {
 	return nil
 }
 
+func (c *Converter) MigrateMessagesSyncMode(ctx context.Context) error {
+	const (
+		perPage         = 100
+		insertChunkSize = 2000
+		stepName        = SyncStepMessages
+	)
+	c.log.Debug("starting messages migration")
+
+	lastInitiator, lastFlowID, err := c.newDB.MigrationStore().GetCursorProgress(ctx, stepName)
+	if err != nil {
+		return err
+	}
+	if lastInitiator > 0 || lastFlowID > 0 {
+		c.log.Info("resuming messages migration", "lastInitiator", lastInitiator, "lastFlowID", lastFlowID)
+	}
+
+	completedAt, err := c.GetStepCompletedAt(ctx, stepName)
+	if err != nil {
+		return err
+	}
+
+	fail := func(cause error) error {
+		_ = c.newDB.MigrationStore().MarkStepFailed(ctx, stepName, 0, cause.Error())
+		return cause
+	}
+
+	for {
+		tx, err := c.newDB.Pool().Begin(ctx)
+		if err != nil {
+			return fail(err)
+		}
+
+		threadIDToConv, err := c.getConversationMapSyncMode(ctx, lastInitiator, lastFlowID, perPage, tx, completedAt)
+		if err != nil {
+			tx.Rollback(ctx)
+			return fail(err)
+		}
+		if len(threadIDToConv) == 0 {
+			tx.Rollback(ctx)
+			break
+		}
+
+		messages, files, err := c.migratePageMessages(ctx, tx, threadIDToConv)
+		if err != nil {
+			tx.Rollback(ctx)
+			return fail(err)
+		}
+
+		if err := c.insertChunked(ctx, tx, messages, files, insertChunkSize); err != nil {
+			tx.Rollback(ctx)
+			return fail(err)
+		}
+
+		if err := tx.Commit(ctx); err != nil {
+			tx.Rollback(ctx)
+			return fail(err)
+		}
+
+		// advance cursor to the last group on this page
+		var maxInitiator, maxFlowID int
+		for _, conv := range threadIDToConv {
+			if conv.Initiator > maxInitiator || (conv.Initiator == maxInitiator && conv.FlowID > maxFlowID) {
+				maxInitiator = conv.Initiator
+				maxFlowID = conv.FlowID
+			}
+		}
+		lastInitiator, lastFlowID = maxInitiator, maxFlowID
+
+		if err := c.newDB.MigrationStore().SaveCursorProgress(ctx, stepName, lastInitiator, lastFlowID); err != nil {
+			return err
+		}
+
+		c.log.Debug("messages page committed", "lastInitiator", lastInitiator, "lastFlowID", lastFlowID, "conversations", len(threadIDToConv))
+
+		if len(threadIDToConv) < perPage {
+			break
+		}
+	}
+
+	return nil
+}
+
 func (c *Converter) insertChunked(ctx context.Context, tx pgx.Tx, messages []*modelnew.Message, files []*modelnew.MessageDocument, chunkSize int) error {
 	for i := 0; i < len(messages); i += chunkSize {
 		end := i + chunkSize
@@ -113,6 +195,38 @@ func (c *Converter) insertChunked(ctx context.Context, tx pgx.Tx, messages []*mo
 
 func (c *Converter) getConversationMap(ctx context.Context, lastInitiator, lastFlowID, limit int, tx pgx.Tx) (map[uuid.UUID]*modelold.GroupedConversation, error) {
 	conversations, err := c.oldDB.ConversationStore().GetGroupedConversationsByUsersAndFlow(ctx, lastInitiator, lastFlowID, limit)
+	if err != nil {
+		return nil, err
+	}
+	var convIDs []string
+	for _, conv := range conversations {
+		convIDs = append(convIDs, conv.ConvIDs.Strings()...)
+	}
+	threads, err := c.resolver.ResolveMigrationRows(ctx, tx, &modelnew.MigrationRowFilters{
+		Type:   []modelnew.EntityType{modelnew.EntityTypeConversationThread},
+		OldIDs: convIDs,
+	})
+	if err != nil {
+		return nil, err
+	}
+	threadByOldID := make(map[string]*modelnew.MigrationRow, len(threads))
+	for _, t := range threads {
+		threadByOldID[t.OldID] = t
+	}
+	threadIDToConv := make(map[uuid.UUID]*modelold.GroupedConversation)
+	for _, conv := range conversations {
+		for _, convID := range conv.ConvIDs {
+			if t, ok := threadByOldID[convID.String()]; ok {
+				threadIDToConv[t.NewID] = conv
+				break
+			}
+		}
+	}
+	return threadIDToConv, nil
+}
+
+func (c *Converter) getConversationMapSyncMode(ctx context.Context, lastInitiator, lastFlowID, limit int, tx pgx.Tx, from time.Time) (map[uuid.UUID]*modelold.GroupedConversation, error) {
+	conversations, err := c.oldDB.ConversationStore().GetGroupedConversationsByUsersAndFlowFromDate(ctx, lastInitiator, lastFlowID, limit, from)
 	if err != nil {
 		return nil, err
 	}
@@ -274,7 +388,7 @@ func (c *Converter) buildPageSenderMaps(ctx context.Context, tx pgx.Tx, threadID
 			return nil, err
 		}
 		for _, m := range members {
-			result.operatorMembersByKey[m.OldID+":"+m.ExtraKey] = m.NewID
+			result.operatorMembersByKey[m.OldID+":"+*m.ExtraKey] = m.NewID
 		}
 	}
 
@@ -299,7 +413,7 @@ func (c *Converter) buildPageSenderMaps(ctx context.Context, tx pgx.Tx, threadID
 			return nil, err
 		}
 		for _, m := range members {
-			result.initiatorMembersByKey[m.OldID+":"+m.ExtraKey] = m.NewID
+			result.initiatorMembersByKey[m.OldID+":"+*m.ExtraKey] = m.NewID
 		}
 	}
 
@@ -324,7 +438,7 @@ func (c *Converter) buildPageSenderMaps(ctx context.Context, tx pgx.Tx, threadID
 			return nil, err
 		}
 		for _, m := range members {
-			result.botMembersByKey[m.OldID+":"+m.ExtraKey] = m.NewID
+			result.botMembersByKey[m.OldID+":"+*m.ExtraKey] = m.NewID
 		}
 	}
 

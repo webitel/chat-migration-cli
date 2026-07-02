@@ -8,6 +8,7 @@ const (
 	EntityTypeClientContact                EntityType = "client_contact"
 	EntityTypeBotContact                   EntityType = "bot_contact"
 	EntityTypeConversationThread           EntityType = "conversation_thread"
+	EntityTypeFlowIDAndInitiatorIDToThread EntityType = "flow_id_and_initiator_id_to_thread"
 	EntityTypeInitiatorChannelThreadDialog EntityType = "initiator_channel_thread_dialog"
 	EntityTypeBotChannelThreadDialog       EntityType = "bot_channel_thread_dialog"
 	EntityTypeInternalChannelThreadDialog  EntityType = "internal_channel_thread_dialog"
@@ -32,5 +33,5 @@ type MigrationRow struct {
 	OldID      string     `db:"old_id"`
 	NewID      uuid.UUID  `db:"new_id"`
 	DomainID   int        `db:"domain_id"`
-	ExtraKey   string     `db:"extra_key"`
+	ExtraKey   *string    `db:"extra_key"`
 }

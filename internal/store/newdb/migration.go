@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/Masterminds/squirrel"
 	"github.com/jackc/pgx/v5"
@@ -155,6 +156,20 @@ func (s *MigrationStore) InsertMigrations(ctx context.Context, tx pgx.Tx, migrat
 	return nil
 }
 
+func (s *MigrationStore) NullifyMigrationRowsExtraKey(ctx context.Context, tx pgx.Tx, extraKey string, migrationType string) error {
+
+	var (
+		query = `UPDATE public.chat_migration SET extra_key = NULL WHERE extra_key = $1 AND entity_type = $2`
+	)
+
+	_, err := tx.Exec(ctx, query, extraKey, migrationType)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
 func (s *MigrationStore) GetCompletedSteps(ctx context.Context) (map[string]struct{}, error) {
 	rows, err := s.store.Pool().Query(ctx, `SELECT step FROM public.chat_migration_step WHERE status = 'completed'`)
 	if err != nil {
@@ -180,9 +195,9 @@ func (s *MigrationStore) GetCompletedSteps(ctx context.Context) (map[string]stru
 
 func (s *MigrationStore) MarkStepCompleted(ctx context.Context, step string) error {
 	_, err := s.store.Pool().Exec(ctx, `
-		INSERT INTO public.chat_migration_step (id, step, status, page_offset)
-		VALUES (gen_random_uuid(), $1, 'completed', 0)
-		ON CONFLICT (step) DO UPDATE SET status = 'completed', page_offset = 0, error = NULL
+		INSERT INTO public.chat_migration_step (id, step, status, page_offset, completed_at)
+		VALUES (gen_random_uuid(), $1, 'completed', 0, now())
+		ON CONFLICT (step) DO UPDATE SET status = 'completed', page_offset = 0, error = NULL, completed_at = now()
 	`, step)
 	return err
 }
@@ -199,6 +214,36 @@ func (s *MigrationStore) GetStepProgress(ctx context.Context, step string) (int,
 		return 0, nil
 	}
 	return offset, err
+}
+
+func (s *MigrationStore) GetStepCompletedAtInTx(ctx context.Context, tx pgx.Tx, step string, stepAnalog string) (time.Time, error) {
+	var completedAt *time.Time
+	err := tx.QueryRow(ctx, `
+		SELECT max(completed_at) FROM public.chat_migration_step
+		WHERE step = $1 OR step = $2;
+	`, step, stepAnalog).Scan(&completedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return time.Time{}, nil
+	}
+	if completedAt == nil {
+		return time.Time{}, nil
+	}
+	return *completedAt, err
+}
+
+func (s *MigrationStore) GetStepCompletedAt(ctx context.Context, step string, stepAnalog string) (time.Time, error) {
+	var completedAt *time.Time
+	err := s.store.Pool().QueryRow(ctx, `
+		SELECT max(completed_at) FROM public.chat_migration_step
+		WHERE step = $1 OR step = $2;
+	`, step, stepAnalog).Scan(&completedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return time.Time{}, nil
+	}
+	if completedAt == nil {
+		return time.Time{}, nil
+	}
+	return *completedAt, err
 }
 
 // SaveStepProgress records that the page at the given offset completed successfully.
