@@ -18,7 +18,7 @@ func NewDirectSettingsStore(store *DB) *DirectSettingsStore {
 func (s *DirectSettingsStore) InsertDirectSettings(ctx context.Context, tx pgx.Tx, settings []*modelnew.DirectSettings) error {
 	_, err := tx.Exec(
 		ctx,
-		`INSERT INTO direct_settings (thread_dialog_id, domain_id, title) VALUES ($1, $2, $3)`,
+		`INSERT INTO im_thread.direct_settings (thread_dialog_id, domain_id, title) VALUES ($1, $2, $3)`,
 		settings[0].ThreadDialogID,
 		settings[0].DomainID,
 		settings[0].Title,

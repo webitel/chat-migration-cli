@@ -83,7 +83,7 @@ func (db *DB) initializeMigrationTable(ctx context.Context) error {
 	CREATE TABLE IF NOT EXISTS public.chat_migration_step(
 	id UUID PRIMARY KEY NOT NULL DEFAULT gen_random_uuid(),
 	step TEXT NOT NULL,
-	status TEXT NOT NULL,
+	status TEXT NOT NULL
 );
 
 	CREATE UNIQUE INDEX IF NOT EXISTS chat_migration_step_step_uindex ON public.chat_migration_step (step);

@@ -23,11 +23,6 @@ func (c *Converter) MigrateConversations(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	err = c.newDB.MigrationStore().NullifyMigrationRowsExtraKey(ctx, tx, newThreadAfterSyncExtraKey, string(modelnew.EntityTypeFlowIDAndInitiatorIDToThread))
-	if err != nil {
-		tx.Rollback(ctx)
-		return err
-	}
 
 	var lastInitiator, lastFlowID int
 	for {
@@ -62,7 +57,6 @@ func (c *Converter) MigrateConversations(ctx context.Context) error {
 				OldID:      buildFlowIDAndInitiatorIdToThreadOldID(conversation.FlowID, conversation.Initiator),
 				NewID:      converted.ID,
 				DomainID:   conversation.DomainID,
-				ExtraKey:   newThreadAfterSyncExtraKey,
 			})
 			threads = append(threads, converted)
 		}
@@ -110,6 +104,11 @@ func (c *Converter) MigrateConversationsSyncMode(ctx context.Context) error {
 
 	tx, err := c.newDB.Pool().Begin(ctx)
 	if err != nil {
+		return err
+	}
+	err = c.newDB.MigrationStore().NullifyMigrationRowsExtraKey(ctx, tx, newThreadAfterSyncExtraKey, string(modelnew.EntityTypeFlowIDAndInitiatorIDToThread))
+	if err != nil {
+		tx.Rollback(ctx)
 		return err
 	}
 	completedAt, err := c.GetStepCompletedAtInTx(ctx, tx, stepName)
@@ -192,13 +191,14 @@ func (c *Converter) MigrateConversationsSyncMode(ctx context.Context) error {
 					DomainID:   conversation.DomainID,
 				})
 			}
+			syncExtraKey := newThreadAfterSyncExtraKey
 			migrationRows = append(migrationRows, &modelnew.MigrationRow{
 				ID:         uuid.New(),
 				EntityType: modelnew.EntityTypeFlowIDAndInitiatorIDToThread,
 				OldID:      buildFlowIDAndInitiatorIdToThreadOldID(conversation.FlowID, conversation.Initiator),
 				NewID:      converted.ID,
 				DomainID:   conversation.DomainID,
-				ExtraKey:   "sync_new",
+				ExtraKey:   &syncExtraKey,
 			})
 			threads = append(threads, converted)
 		}
@@ -218,8 +218,6 @@ func (c *Converter) MigrateConversationsSyncMode(ctx context.Context) error {
 		lastInitiator = lastOnPage.Initiator
 		lastFlowID = lastOnPage.FlowID
 	}
-	c.newDB.MigrationStore().SaveCursorProgress(ctx, stepName, lastInitiator, lastFlowID)
-
 	return tx.Commit(ctx)
 }
 

@@ -94,7 +94,7 @@ func mustLoadConfig() config {
 	v.SetDefault("LOG_LEVEL", "info")
 	v.SetDefault("LOG_JSON", false)
 	v.SetDefault("START_FROM_STEP", "")
-	v.SetDefault("SYNC", false)
+	v.SetDefault("SYNC_MODE", false)
 
 	oldDSN := v.GetString("OLD_DB_DSN")
 	newDSN := v.GetString("NEW_DB_DSN")
@@ -126,7 +126,7 @@ func mustLoadConfig() config {
 		LogLevel:      level,
 		LogJSON:       v.GetBool("LOG_JSON"),
 		EncryptionKey: encryptionKey,
-		Sync:          v.GetBool("SYNC"),
+		Sync:          v.GetBool("SYNC_MODE"),
 	}
 }
 

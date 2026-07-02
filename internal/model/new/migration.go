@@ -33,5 +33,5 @@ type MigrationRow struct {
 	OldID      string     `db:"old_id"`
 	NewID      uuid.UUID  `db:"new_id"`
 	DomainID   int        `db:"domain_id"`
-	ExtraKey   string     `db:"extra_key"`
+	ExtraKey   *string    `db:"extra_key"`
 }

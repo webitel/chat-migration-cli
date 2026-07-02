@@ -137,6 +137,9 @@ func (c *Converter) MigrateFacebookProvidersSyncMode(ctx context.Context) error 
 		if err != nil {
 			return false, err
 		}
+		if len(providers) == 0 {
+			return false, nil
+		}
 		if len(providers) < limit {
 			iterate = false
 		}

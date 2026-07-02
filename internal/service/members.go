@@ -70,6 +70,10 @@ func (c *Converter) MigrateMembers(ctx context.Context) error {
 			tx.Rollback(ctx)
 			return errors.Join(errors.New("failed to insert thread dialogs"), err)
 		}
+		if err := c.newDB.DirectSettingsStore().InsertDirectSettings(ctx, tx, threadSettings); err != nil {
+			tx.Rollback(ctx)
+			return errors.Join(errors.New("failed to insert direct settings"), err)
+		}
 		if err := c.newDB.MigrationStore().InsertMigrations(ctx, tx, migrationRows); err != nil {
 			tx.Rollback(ctx)
 			return errors.Join(errors.New("failed to insert migration rows for thread dialogs"), err)
@@ -96,6 +100,7 @@ func (c *Converter) MigrateMembersSyncMode(ctx context.Context) error {
 
 	completedAt, err := c.GetStepCompletedAtInTx(ctx, tx, SyncStepMembers)
 	if err != nil {
+		tx.Rollback(ctx)
 		return err
 	}
 
@@ -118,10 +123,15 @@ func (c *Converter) MigrateMembersSyncMode(ctx context.Context) error {
 		c.log.Debug("members page fetched", "lastInitiator", lastInitiator, "lastFlowID", lastFlowID, "count", len(groupedConversations))
 
 		for _, groupedConv := range groupedConversations {
-			thread, err := c.resolver.ResolveMigrationRow(ctx, tx, modelnew.EntityTypeFlowIDAndInitiatorIDToThread, buildFlowIDAndInitiatorIdToThreadOldID(groupedConv.FlowID, groupedConv.Initiator), "", groupedConv.DomainID)
+			oldID := buildFlowIDAndInitiatorIdToThreadOldID(groupedConv.FlowID, groupedConv.Initiator)
+			thread, err := c.newDB.MigrationStore().GetMigrationRow(ctx, tx, &modelnew.MigrationRowFilters{
+				OldIDs:   []string{oldID},
+				Type:     []modelnew.EntityType{modelnew.EntityTypeFlowIDAndInitiatorIDToThread},
+				DomainID: groupedConv.DomainID,
+			})
 			if err != nil {
 				tx.Rollback(ctx)
-				return errors.Join(errors.New("failed to resolve migration row for conversation thread "+groupedConv.ConvIDs[0].String()), err)
+				return errors.Join(errors.New("failed to resolve migration row for conversation originators pair "+oldID), err)
 			}
 			var (
 				dialogs                []*modelnew.ThreadDialog
@@ -129,7 +139,7 @@ func (c *Converter) MigrateMembersSyncMode(ctx context.Context) error {
 				rows                   []*modelnew.MigrationRow
 				buildThreadDialogsFunc = c.buildInternalUsersThreadDialogs
 			)
-			if thread.ExtraKey == newThreadAfterSyncExtraKey {
+			if thread.ExtraKey != nil && *thread.ExtraKey == newThreadAfterSyncExtraKey {
 				buildThreadDialogsFunc = c.buildThreadDialogsFromConversation
 			}
 
@@ -258,6 +268,7 @@ func (c *Converter) buildOwnerThreadDialogFromConversation(ctx context.Context, 
 	}
 
 	threadDialogs := []*modelnew.ThreadDialog{initiatorDialog, botDialog}
+	newThreadIDStr := newThreadID.String()
 	migrationRows := []*modelnew.MigrationRow{
 		{
 			ID:         uuid.New(),
@@ -265,7 +276,7 @@ func (c *Converter) buildOwnerThreadDialogFromConversation(ctx context.Context, 
 			OldID:      strconv.Itoa(conversation.Initiator),
 			NewID:      initiatorDialog.ID,
 			DomainID:   conversation.DomainID,
-			ExtraKey:   newThreadID.String(),
+			ExtraKey:   &newThreadIDStr,
 		},
 		{
 			ID:         uuid.New(),
@@ -273,7 +284,7 @@ func (c *Converter) buildOwnerThreadDialogFromConversation(ctx context.Context, 
 			OldID:      strconv.Itoa(conversation.FlowID),
 			NewID:      botDialog.ID,
 			DomainID:   conversation.DomainID,
-			ExtraKey:   newThreadID.String(),
+			ExtraKey:   &newThreadIDStr,
 		},
 	}
 
@@ -383,13 +394,14 @@ func (c *Converter) buildInternalUsersThreadDialogs(ctx context.Context, tx pgx.
 			CreatedAt:      now,
 			UpdatedAt:      now,
 		})
+		threadIDStr := threadID.String()
 		migrationRows = append(migrationRows, &modelnew.MigrationRow{
 			ID:         uuid.New(),
 			EntityType: modelnew.EntityTypeInternalChannelThreadDialog,
 			OldID:      strconv.Itoa(user.UserID),
 			NewID:      threadDialog.ID,
 			DomainID:   conversation.DomainID,
-			ExtraKey:   threadID.String(),
+			ExtraKey:   &threadIDStr,
 		})
 	}
 

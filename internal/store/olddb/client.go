@@ -80,7 +80,7 @@ FROM chat.client c
              ) channels ON true
 WHERE channels.domains IS NOT NULL
 AND type != 'portal'
-AND ($3 IS NULL OR c.created_at >= $3)`
+AND ($3::timestamp IS NULL OR c.created_at >= $3::timestamp)`
 	)
 	if offset < 0 {
 		offset = 0

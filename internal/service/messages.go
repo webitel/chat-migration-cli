@@ -388,7 +388,7 @@ func (c *Converter) buildPageSenderMaps(ctx context.Context, tx pgx.Tx, threadID
 			return nil, err
 		}
 		for _, m := range members {
-			result.operatorMembersByKey[m.OldID+":"+m.ExtraKey] = m.NewID
+			result.operatorMembersByKey[m.OldID+":"+*m.ExtraKey] = m.NewID
 		}
 	}
 
@@ -413,7 +413,7 @@ func (c *Converter) buildPageSenderMaps(ctx context.Context, tx pgx.Tx, threadID
 			return nil, err
 		}
 		for _, m := range members {
-			result.initiatorMembersByKey[m.OldID+":"+m.ExtraKey] = m.NewID
+			result.initiatorMembersByKey[m.OldID+":"+*m.ExtraKey] = m.NewID
 		}
 	}
 
@@ -438,7 +438,7 @@ func (c *Converter) buildPageSenderMaps(ctx context.Context, tx pgx.Tx, threadID
 			return nil, err
 		}
 		for _, m := range members {
-			result.botMembersByKey[m.OldID+":"+m.ExtraKey] = m.NewID
+			result.botMembersByKey[m.OldID+":"+*m.ExtraKey] = m.NewID
 		}
 	}
 

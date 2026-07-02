@@ -64,7 +64,7 @@ func (s *BotStore) GetFromDate(ctx context.Context, offset int, limit int, from 
        MAX(updated_at) updated_at
 FROM chat.bot
 WHERE flow_id IS NOT NULL
-AND ($3 IS NULL OR created_at >= $3)
+AND ($3::timestamp IS NULL OR created_at >= $3::timestamp)
 GROUP BY
     flow_id, dc
     OFFSET $1 LIMIT $2`
