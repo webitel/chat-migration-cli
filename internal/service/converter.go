@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"time"
 
@@ -89,6 +90,54 @@ func (c *Converter) Migrate(ctx context.Context) error {
 
 func (c *Converter) MigrateFromStep(ctx context.Context, stepName string) error {
 	return c.runStepsFrom(ctx, stepName)
+}
+
+func (c *Converter) MigrateSingleStep(ctx context.Context, stepName string) error {
+	return c.runSingleStep(ctx, stepName)
+}
+
+func (c *Converter) runSingleStep(ctx context.Context, stepName string) error {
+	if stepName == "" {
+		return errors.New("step name is required")
+	}
+
+	var steps []MigrationStep
+	if c.isSyncMode {
+		steps = c.getSyncModeMigrationSteps()
+	} else {
+		steps = c.getMigrationSteps()
+	}
+
+	var step *MigrationStep
+	for i := range steps {
+		if steps[i].Name == stepName {
+			step = &steps[i]
+			break
+		}
+	}
+	if step == nil {
+		return fmt.Errorf("unknown migration step: %s", stepName)
+	}
+
+	if !c.isSyncMode {
+		completed, err := c.newDB.MigrationStore().GetCompletedSteps(ctx)
+		if err != nil {
+			return err
+		}
+		if _, ok := completed[step.Name]; ok {
+			return fmt.Errorf("migration step %q is already completed; re-run is not supported outside sync mode - restore the target database and retry", step.Name)
+		}
+	}
+
+	c.log.Info("migration step started", "step", step.Name)
+	if err := step.Run(ctx); err != nil {
+		return err
+	}
+	if err := c.newDB.MigrationStore().MarkStepCompleted(ctx, step.Name); err != nil {
+		return err
+	}
+	c.log.Info("migration step completed", "step", step.Name)
+	return nil
 }
 
 func (c *Converter) runStepsFrom(ctx context.Context, startFrom string) error {
