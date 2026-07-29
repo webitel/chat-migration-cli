@@ -22,6 +22,7 @@ type config struct {
 	OldDBConns    int32      // OLD_DB_MAX_CONNS (default 5)
 	NewDBConns    int32      // NEW_DB_MAX_CONNS (default 10)
 	StartFrom     string     // START_FROM_STEP: skip steps before this one (optional)
+	SingleStep    bool       // SINGLE_STEP: run only the step named by StartFrom, then stop (optional)
 	LogLevel      slog.Level // LOG_LEVEL: debug|info|warn|error (default info)
 	LogJSON       bool       // LOG_JSON: emit JSON instead of text (default false)
 	EncryptionKey string     // required: 32-byte AES-256 key for encrypting tokens
@@ -69,10 +70,14 @@ func main() {
 	converter := service.NewConverter(srcDB, dstDB, encryptor, cfg.Sync)
 
 	var runErr error
-	if cfg.StartFrom != "" {
+	switch {
+	case cfg.SingleStep:
+		log.Info("running single migration step", "step", cfg.StartFrom)
+		runErr = converter.MigrateSingleStep(ctx, cfg.StartFrom)
+	case cfg.StartFrom != "":
 		log.Info("starting migration from step", "step", cfg.StartFrom)
 		runErr = converter.MigrateFromStep(ctx, cfg.StartFrom)
-	} else {
+	default:
 		log.Info("starting full migration")
 		runErr = converter.Migrate(ctx)
 	}
@@ -94,6 +99,7 @@ func mustLoadConfig() config {
 	v.SetDefault("LOG_LEVEL", "info")
 	v.SetDefault("LOG_JSON", false)
 	v.SetDefault("START_FROM_STEP", "")
+	v.SetDefault("SINGLE_STEP", false)
 	v.SetDefault("SYNC_MODE", false)
 
 	oldDSN := v.GetString("OLD_DB_DSN")
@@ -111,6 +117,12 @@ func mustLoadConfig() config {
 		slog.Error("MIGRATION_ENCRYPTION_KEY is required")
 		os.Exit(1)
 	}
+	startFrom := v.GetString("START_FROM_STEP")
+	singleStep := v.GetBool("SINGLE_STEP")
+	if singleStep && startFrom == "" {
+		slog.Error("MIGRATION_START_FROM_STEP is required when MIGRATION_SINGLE_STEP is enabled")
+		os.Exit(1)
+	}
 
 	var level slog.Level
 	if err := level.UnmarshalText([]byte(v.GetString("LOG_LEVEL"))); err != nil {
@@ -122,7 +134,8 @@ func mustLoadConfig() config {
 		NewDBDSN:      newDSN,
 		OldDBConns:    int32(v.GetInt("OLD_DB_MAX_CONNS")),
 		NewDBConns:    int32(v.GetInt("NEW_DB_MAX_CONNS")),
-		StartFrom:     v.GetString("START_FROM_STEP"),
+		StartFrom:     startFrom,
+		SingleStep:    singleStep,
 		LogLevel:      level,
 		LogJSON:       v.GetBool("LOG_JSON"),
 		EncryptionKey: encryptionKey,

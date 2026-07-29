@@ -57,6 +57,7 @@ All options are read from environment variables prefixed with `MIGRATION_`.
 | `MIGRATION_NEW_DB_MAX_CONNS` | no | `10` | Connection pool size for the new DB |
 | `MIGRATION_SYNC_MODE` | no | `false` | Run in sync mode instead of full migration mode |
 | `MIGRATION_START_FROM_STEP` | no | _(all)_ | Start from this step, skipping earlier ones |
+| `MIGRATION_SINGLE_STEP` | no | `false` | Run only the step named by `MIGRATION_START_FROM_STEP`, then stop. Requires `MIGRATION_START_FROM_STEP` to be set. Resumes a not-yet-completed step from its last saved progress; fails if the step is already completed (outside sync mode - sync-mode steps remain re-runnable) |
 | `MIGRATION_LOG_LEVEL` | no | `info` | Log verbosity: `debug`, `info`, `warn`, `error` |
 | `MIGRATION_LOG_JSON` | no | `false` | Emit structured JSON logs instead of text |
 | `MIGRATION_ENCRYPTION_KEY` | yes | — | 32-byte AES-256 key used to encrypt provider tokens at rest |
@@ -86,6 +87,14 @@ MIGRATION_OLD_DB_DSN="postgres://..." \
 MIGRATION_NEW_DB_DSN="postgres://..." \
 MIGRATION_ENCRYPTION_KEY="<32-character-key>" \
 MIGRATION_START_FROM_STEP=messages \
+./chat-migration-cli
+
+# Run exactly one step, then stop (fails if the step is already completed outside sync mode)
+MIGRATION_OLD_DB_DSN="postgres://..." \
+MIGRATION_NEW_DB_DSN="postgres://..." \
+MIGRATION_ENCRYPTION_KEY="<32-character-key>" \
+MIGRATION_START_FROM_STEP=messages \
+MIGRATION_SINGLE_STEP=true \
 ./chat-migration-cli
 
 # With debug logging
