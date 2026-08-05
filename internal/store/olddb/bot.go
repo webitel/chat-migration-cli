@@ -31,6 +31,7 @@ FROM chat.bot
 WHERE flow_id IS NOT NULL
 GROUP BY
     flow_id, dc
+ORDER BY flow_id, dc
     OFFSET $1 LIMIT $2`
 	)
 	if offset < 0 {
@@ -67,6 +68,7 @@ WHERE flow_id IS NOT NULL
 AND ($3::timestamp IS NULL OR created_at >= $3::timestamp)
 GROUP BY
     flow_id, dc
+ORDER BY flow_id, dc
     OFFSET $1 LIMIT $2`
 	)
 	if offset < 0 {
@@ -119,7 +121,7 @@ WHERE provider = 'messenger'`
 	if limit < 1 {
 		limit = 1
 	}
-	query += ` OFFSET $1 LIMIT $2`
+	query += ` ORDER BY id OFFSET $1 LIMIT $2`
 
 	rows, err := s.db.Pool().Query(ctx, query, offset, limit)
 	if err != nil {
@@ -181,6 +183,7 @@ func (s *BotStore) GetMetaGatewaysFromDate(ctx context.Context, offset int, limi
        metadata, created_at, updated_at, updates
 FROM chat.bot
 WHERE provider = 'messenger' AND created_at >= $1
+ORDER BY id
 OFFSET $2 LIMIT $3`
 	)
 	if offset < 0 {

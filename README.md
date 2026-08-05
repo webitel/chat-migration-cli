@@ -43,7 +43,12 @@ On the very first sync run (when no previous migration has completed), the times
 
 ### Pagination
 
-The conversations, members, and messages steps use keyset pagination ordered by `(initiator_id, flow_id)`. This avoids the O(N²) cost of OFFSET-based pagination on large datasets.
+Steps use one of two pagination strategies:
+
+- **Keyset pagination** (`conversations`, `members`, `messages`) ordered by `(initiator_id, flow_id)`. This avoids the O(N²) cost of OFFSET-based pagination on large datasets.
+- **Offset pagination** (`clients_to_contacts`, `bots_to_contacts`, `facebook_and_whatsapp`) — plain `OFFSET`/`LIMIT` paging over a deterministically ordered query, so repeated runs resume against the same row order.
+
+Every step commits its destination-DB writes and saves its checkpoint once per page, so a crash or transient error at any point resumes from the last committed page rather than restarting the whole step.
 
 ## Configuration
 

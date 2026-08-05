@@ -12,24 +12,38 @@ import (
 )
 
 func (c *Converter) MigrateClientsToContacts(ctx context.Context) error {
-	var (
-		perPage = 1000
-	)
+	const perPage = 1000
 	c.log.Debug("starting clients-to-contacts migration")
-	tx, err := c.newDB.Pool().Begin(ctx)
+
+	lastID, err := c.newDB.MigrationStore().GetIDCursorProgress(ctx, StepClientsToContacts)
 	if err != nil {
 		return err
 	}
-	err = PagerFunc(ctx, perPage, func(ctx context.Context, offset, limit int) (bool, error) {
-		iterate := true
-		clients, err := c.oldDB.ClientStore().Get(ctx, offset, limit)
+	if lastID > 0 {
+		c.log.Info("resuming clients-to-contacts migration", "lastID", lastID)
+	}
+
+	fail := func(cause error) error {
+		_ = c.newDB.MigrationStore().MarkStepFailed(ctx, StepClientsToContacts, 0, cause.Error())
+		return cause
+	}
+
+	for {
+		tx, err := c.newDB.Pool().Begin(ctx)
 		if err != nil {
-			return false, err
+			return fail(err)
 		}
-		if len(clients) < limit {
-			iterate = false
+
+		clients, err := c.oldDB.ClientStore().Get(ctx, lastID, perPage)
+		if err != nil {
+			tx.Rollback(ctx)
+			return fail(err)
 		}
-		c.log.Debug("clients page fetched", "offset", offset, "count", len(clients))
+		if len(clients) == 0 {
+			tx.Rollback(ctx)
+			break
+		}
+		c.log.Debug("clients page fetched", "lastID", lastID, "count", len(clients))
 		var (
 			contacts      []*modelnew.Contact
 			migrationRows []*modelnew.MigrationRow
@@ -58,45 +72,72 @@ func (c *Converter) MigrateClientsToContacts(ctx context.Context) error {
 			}
 		}
 		if err := c.newDB.ContactStore().InsertContacts(ctx, tx, contacts); err != nil {
-			return false, err
+			tx.Rollback(ctx)
+			return fail(err)
 		}
 		if err := c.newDB.MigrationStore().InsertMigrations(ctx, tx, migrationRows); err != nil {
-			return false, err
+			tx.Rollback(ctx)
+			return fail(err)
 		}
-		return iterate, nil
-	})
-	if err != nil {
-		tx.Rollback(ctx)
-		return err
+
+		// query is ORDER BY c.id on the outer SELECT, so the last row is the max id fetched
+		lastID = clients[len(clients)-1].ID
+
+		if err := c.newDB.MigrationStore().SaveIDCursorProgressInTx(ctx, tx, StepClientsToContacts, lastID); err != nil {
+			tx.Rollback(ctx)
+			return fail(err)
+		}
+
+		if err := tx.Commit(ctx); err != nil {
+			return fail(err)
+		}
+
+		if len(clients) < perPage {
+			break
+		}
 	}
-	return tx.Commit(ctx)
+
+	return nil
 }
 
 func (c *Converter) MigrateClientsToContactsSyncMode(ctx context.Context) error {
-	var (
-		perPage = 1000
-	)
+	const perPage = 1000
 	c.log.Debug("starting clients-to-contacts migration")
-	tx, err := c.newDB.Pool().Begin(ctx)
+
+	lastID, err := c.newDB.MigrationStore().GetIDCursorProgress(ctx, SyncStepClientsToContacts)
+	if err != nil {
+		return err
+	}
+	if lastID > 0 {
+		c.log.Info("resuming clients-to-contacts migration", "lastID", lastID)
+	}
+
+	completedAt, err := c.GetStepCompletedAt(ctx, SyncStepClientsToContacts)
 	if err != nil {
 		return err
 	}
 
-	completedAt, err := c.GetStepCompletedAtInTx(ctx, tx, SyncStepClientsToContacts)
-	if err != nil {
-		return err
+	fail := func(cause error) error {
+		_ = c.newDB.MigrationStore().MarkStepFailed(ctx, SyncStepClientsToContacts, 0, cause.Error())
+		return cause
 	}
 
-	err = PagerFunc(ctx, perPage, func(ctx context.Context, offset, limit int) (bool, error) {
-		iterate := true
-		clients, err := c.oldDB.ClientStore().GetFromDate(ctx, offset, limit, &completedAt)
+	for {
+		tx, err := c.newDB.Pool().Begin(ctx)
 		if err != nil {
-			return false, err
+			return fail(err)
 		}
-		if len(clients) < limit {
-			iterate = false
+
+		clients, err := c.oldDB.ClientStore().GetFromDate(ctx, lastID, perPage, &completedAt)
+		if err != nil {
+			tx.Rollback(ctx)
+			return fail(err)
 		}
-		c.log.Debug("clients page fetched", "offset", offset, "count", len(clients))
+		if len(clients) == 0 {
+			tx.Rollback(ctx)
+			break
+		}
+		c.log.Debug("clients page fetched", "lastID", lastID, "count", len(clients))
 		var (
 			contacts      []*modelnew.Contact
 			migrationRows []*modelnew.MigrationRow
@@ -125,18 +166,32 @@ func (c *Converter) MigrateClientsToContactsSyncMode(ctx context.Context) error 
 			}
 		}
 		if err := c.newDB.ContactStore().InsertContactsIgnoreConflicts(ctx, tx, contacts); err != nil {
-			return false, err
+			tx.Rollback(ctx)
+			return fail(err)
 		}
 		if err := c.newDB.MigrationStore().InsertMigrations(ctx, tx, migrationRows); err != nil {
-			return false, err
+			tx.Rollback(ctx)
+			return fail(err)
 		}
-		return iterate, nil
-	})
-	if err != nil {
-		tx.Rollback(ctx)
-		return err
+
+		// query is ORDER BY c.id on the outer SELECT, so the last row is the max id fetched
+		lastID = clients[len(clients)-1].ID
+
+		if err := c.newDB.MigrationStore().SaveIDCursorProgressInTx(ctx, tx, SyncStepClientsToContacts, lastID); err != nil {
+			tx.Rollback(ctx)
+			return fail(err)
+		}
+
+		if err := tx.Commit(ctx); err != nil {
+			return fail(err)
+		}
+
+		if len(clients) < perPage {
+			break
+		}
 	}
-	return tx.Commit(ctx)
+
+	return nil
 }
 
 func convertClientToContact(client *old.Client) []*modelnew.Contact {

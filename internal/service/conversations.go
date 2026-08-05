@@ -19,19 +19,32 @@ func (c *Converter) MigrateConversations(ctx context.Context) error {
 	const perPage = 1000
 	c.log.Debug("starting conversations migration")
 
-	tx, err := c.newDB.Pool().Begin(ctx)
+	lastInitiator, lastFlowID, err := c.newDB.MigrationStore().GetCursorProgress(ctx, StepConversations)
 	if err != nil {
 		return err
 	}
+	if lastInitiator > 0 || lastFlowID > 0 {
+		c.log.Info("resuming conversations migration", "lastInitiator", lastInitiator, "lastFlowID", lastFlowID)
+	}
 
-	var lastInitiator, lastFlowID int
+	fail := func(cause error) error {
+		_ = c.newDB.MigrationStore().MarkStepFailed(ctx, StepConversations, 0, cause.Error())
+		return cause
+	}
+
 	for {
+		tx, err := c.newDB.Pool().Begin(ctx)
+		if err != nil {
+			return fail(err)
+		}
+
 		groupedConversations, err := c.oldDB.ConversationStore().GetGroupedConversationsByUsersAndFlow(ctx, lastInitiator, lastFlowID, perPage)
 		if err != nil {
 			tx.Rollback(ctx)
-			return err
+			return fail(err)
 		}
 		if len(groupedConversations) == 0 {
+			tx.Rollback(ctx)
 			break
 		}
 		c.log.Debug("conversations page fetched", "lastInitiator", lastInitiator, "lastFlowID", lastFlowID, "count", len(groupedConversations))
@@ -63,22 +76,40 @@ func (c *Converter) MigrateConversations(ctx context.Context) error {
 
 		if err := c.newDB.ThreadStore().InsertThreads(ctx, tx, threads); err != nil {
 			tx.Rollback(ctx)
-			return err
+			return fail(err)
 		}
 		if err := c.newDB.MigrationStore().InsertMigrations(ctx, tx, migrationRows); err != nil {
 			tx.Rollback(ctx)
-			return err
+			return fail(err)
 		}
+
+		// advance cursor to the max group on this page (result row order is not guaranteed)
+		var maxInitiator, maxFlowID int
+		for _, conv := range groupedConversations {
+			if conv.Initiator > maxInitiator || (conv.Initiator == maxInitiator && conv.FlowID > maxFlowID) {
+				maxInitiator = conv.Initiator
+				maxFlowID = conv.FlowID
+			}
+		}
+		lastInitiator, lastFlowID = maxInitiator, maxFlowID
+
+		if err := c.newDB.MigrationStore().SaveCursorProgressInTx(ctx, tx, StepConversations, lastInitiator, lastFlowID); err != nil {
+			tx.Rollback(ctx)
+			return fail(err)
+		}
+
+		if err := tx.Commit(ctx); err != nil {
+			return fail(err)
+		}
+
+		c.log.Debug("conversations page committed", "lastInitiator", lastInitiator, "lastFlowID", lastFlowID, "conversations", len(groupedConversations))
 
 		if len(groupedConversations) < perPage {
 			break
 		}
-		last := groupedConversations[len(groupedConversations)-1]
-		lastInitiator = last.Initiator
-		lastFlowID = last.FlowID
 	}
 
-	return tx.Commit(ctx)
+	return nil
 }
 
 func buildFlowIDAndInitiatorIdToThreadOldID(flowID, initiatorID int) string {
@@ -102,35 +133,72 @@ func (c *Converter) MigrateConversationsSyncMode(ctx context.Context) error {
 	)
 	c.log.Debug("starting conversations migration")
 
-	tx, err := c.newDB.Pool().Begin(ctx)
+	lastInitiator, lastFlowID, err := c.newDB.MigrationStore().GetCursorProgress(ctx, stepName)
 	if err != nil {
 		return err
 	}
-	err = c.newDB.MigrationStore().NullifyMigrationRowsExtraKey(ctx, tx, newThreadAfterSyncExtraKey, string(modelnew.EntityTypeFlowIDAndInitiatorIDToThread))
-	if err != nil {
-		tx.Rollback(ctx)
-		return err
+	isResuming := lastInitiator > 0 || lastFlowID > 0
+	if isResuming {
+		c.log.Info("resuming conversations migration", "lastInitiator", lastInitiator, "lastFlowID", lastFlowID)
+	} else {
+		// Run NullifyMigrationRowsExtraKey in a separate transaction, but only on a
+		// fresh start. If we're resuming, a prior run of this step already committed
+		// some pages tagged with newThreadAfterSyncExtraKey; nullifying now would wipe
+		// those tags without ever re-tagging them (their conversations are already
+		// migrated and won't be seen again), which makes MigrateMembersSyncMode build
+		// the wrong dialog set for those threads.
+		nullifyTx, err := c.newDB.Pool().Begin(ctx)
+		if err != nil {
+			return err
+		}
+		err = c.newDB.MigrationStore().NullifyMigrationRowsExtraKey(ctx, nullifyTx, newThreadAfterSyncExtraKey, string(modelnew.EntityTypeFlowIDAndInitiatorIDToThread))
+		if err != nil {
+			nullifyTx.Rollback(ctx)
+			return err
+		}
+		if err := nullifyTx.Commit(ctx); err != nil {
+			return err
+		}
 	}
-	completedAt, err := c.GetStepCompletedAtInTx(ctx, tx, stepName)
+
+	completedAt, err := c.GetStepCompletedAt(ctx, stepName)
 	if err != nil {
-		tx.Rollback(ctx)
 		return err
 	}
 
-	var lastInitiator, lastFlowID int
+	fail := func(cause error) error {
+		_ = c.newDB.MigrationStore().MarkStepFailed(ctx, stepName, 0, cause.Error())
+		return cause
+	}
 
 	for {
+		tx, err := c.newDB.Pool().Begin(ctx)
+		if err != nil {
+			return fail(err)
+		}
+
 		groupedConversations, err := c.oldDB.ConversationStore().GetGroupedConversationsByUsersAndFlowFromDate(ctx, lastInitiator, lastFlowID, perPage, completedAt)
 		if err != nil {
 			tx.Rollback(ctx)
-			return err
+			return fail(err)
 		}
 		if len(groupedConversations) == 0 {
+			tx.Rollback(ctx)
 			break
 		}
 		originalCount := len(groupedConversations)
-		lastOnPage := groupedConversations[originalCount-1]
 		c.log.Debug("conversations page fetched", "lastInitiator", lastInitiator, "lastFlowID", lastFlowID, "count", originalCount)
+
+		// compute the max cursor from the originally fetched page, before the
+		// already-migrated dedup loop below mutates groupedConversations; result row
+		// order is not guaranteed, so take the max rather than the last element.
+		var maxInitiator, maxFlowID int
+		for _, conv := range groupedConversations {
+			if conv.Initiator > maxInitiator || (conv.Initiator == maxInitiator && conv.FlowID > maxFlowID) {
+				maxInitiator = conv.Initiator
+				maxFlowID = conv.FlowID
+			}
+		}
 
 		var (
 			threads       []*modelnew.Thread
@@ -148,7 +216,7 @@ func (c *Converter) MigrateConversationsSyncMode(ctx context.Context) error {
 		})
 		if err != nil {
 			tx.Rollback(ctx)
-			return err
+			return fail(err)
 		}
 
 		for _, thread := range alreadyMigratedThreads {
@@ -205,20 +273,32 @@ func (c *Converter) MigrateConversationsSyncMode(ctx context.Context) error {
 
 		if err := c.newDB.ThreadStore().InsertThreads(ctx, tx, threads); err != nil {
 			tx.Rollback(ctx)
-			return err
+			return fail(err)
 		}
 		if err := c.newDB.MigrationStore().InsertMigrations(ctx, tx, migrationRows); err != nil {
 			tx.Rollback(ctx)
-			return err
+			return fail(err)
 		}
+
+		// advance cursor to the max group on this page (computed above, before dedup)
+		lastInitiator, lastFlowID = maxInitiator, maxFlowID
+
+		if err := c.newDB.MigrationStore().SaveCursorProgressInTx(ctx, tx, stepName, lastInitiator, lastFlowID); err != nil {
+			tx.Rollback(ctx)
+			return fail(err)
+		}
+
+		if err := tx.Commit(ctx); err != nil {
+			return fail(err)
+		}
+
+		c.log.Debug("conversations page committed", "lastInitiator", lastInitiator, "lastFlowID", lastFlowID, "conversations", originalCount)
 
 		if originalCount < perPage {
 			break
 		}
-		lastInitiator = lastOnPage.Initiator
-		lastFlowID = lastOnPage.FlowID
 	}
-	return tx.Commit(ctx)
+	return nil
 }
 
 func convertGroupedConversationToThread(groupedConversation *old.GroupedConversation) *modelnew.Thread {

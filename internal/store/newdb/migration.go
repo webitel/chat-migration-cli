@@ -197,7 +197,7 @@ func (s *MigrationStore) MarkStepCompleted(ctx context.Context, step string) err
 	_, err := s.store.Pool().Exec(ctx, `
 		INSERT INTO public.chat_migration_step (id, step, status, page_offset, completed_at)
 		VALUES (gen_random_uuid(), $1, 'completed', 0, now())
-		ON CONFLICT (step) DO UPDATE SET status = 'completed', page_offset = 0, error = NULL, completed_at = now()
+		ON CONFLICT (step) DO UPDATE SET status = 'completed', page_offset = 0, page_cursor = NULL, error = NULL, completed_at = now()
 	`, step)
 	return err
 }
@@ -246,10 +246,9 @@ func (s *MigrationStore) GetStepCompletedAt(ctx context.Context, step string, st
 	return *completedAt, err
 }
 
-// SaveStepProgress records that the page at the given offset completed successfully.
 // offset should be the next offset to process (current offset + page size).
-func (s *MigrationStore) SaveStepProgress(ctx context.Context, step string, offset int) error {
-	_, err := s.store.Pool().Exec(ctx, `
+func (s *MigrationStore) SaveStepProgressInTx(ctx context.Context, tx pgx.Tx, step string, offset int) error {
+	_, err := tx.Exec(ctx, `
 		INSERT INTO public.chat_migration_step (id, step, status, page_offset)
 		VALUES (gen_random_uuid(), $1, 'in_progress', $2)
 		ON CONFLICT (step) DO UPDATE SET status = 'in_progress', page_offset = EXCLUDED.page_offset, error = NULL
@@ -286,10 +285,41 @@ func (s *MigrationStore) GetCursorProgress(ctx context.Context, step string) (in
 	return initiator, flowID, nil
 }
 
-// SaveCursorProgress records the last successfully committed keyset cursor for a step.
-func (s *MigrationStore) SaveCursorProgress(ctx context.Context, step string, initiator int, flowID int) error {
+func (s *MigrationStore) SaveCursorProgressInTx(ctx context.Context, tx pgx.Tx, step string, initiator int, flowID int) error {
 	cursor := fmt.Sprintf("%d:%d", initiator, flowID)
-	_, err := s.store.Pool().Exec(ctx, `
+	_, err := tx.Exec(ctx, `
+		INSERT INTO public.chat_migration_step (id, step, status, page_cursor)
+		VALUES (gen_random_uuid(), $1, 'in_progress', $2)
+		ON CONFLICT (step) DO UPDATE SET status = 'in_progress', page_cursor = EXCLUDED.page_cursor, error = NULL
+	`, step, cursor)
+	return err
+}
+
+// GetIDCursorProgress returns the last successfully committed keyset cursor (a single
+// primary-key value) for a step. Returns (0, nil) if the step has no recorded cursor
+// progress (first run).
+func (s *MigrationStore) GetIDCursorProgress(ctx context.Context, step string) (id int, err error) {
+	var cursor *string
+	err = s.store.Pool().QueryRow(ctx, `
+		SELECT page_cursor FROM public.chat_migration_step
+		WHERE step = $1 AND status != 'completed'
+	`, step).Scan(&cursor)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return 0, nil
+	}
+	if err != nil || cursor == nil {
+		return 0, err
+	}
+	id, err = strconv.Atoi(*cursor)
+	if err != nil {
+		return 0, fmt.Errorf("invalid cursor %q: %w", *cursor, err)
+	}
+	return id, nil
+}
+
+func (s *MigrationStore) SaveIDCursorProgressInTx(ctx context.Context, tx pgx.Tx, step string, id int) error {
+	cursor := strconv.Itoa(id)
+	_, err := tx.Exec(ctx, `
 		INSERT INTO public.chat_migration_step (id, step, status, page_cursor)
 		VALUES (gen_random_uuid(), $1, 'in_progress', $2)
 		ON CONFLICT (step) DO UPDATE SET status = 'in_progress', page_cursor = EXCLUDED.page_cursor, error = NULL

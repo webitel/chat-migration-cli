@@ -60,11 +60,6 @@ func (c *Converter) MigrateMessages(ctx context.Context) error {
 			return fail(err)
 		}
 
-		if err := tx.Commit(ctx); err != nil {
-			tx.Rollback(ctx)
-			return fail(err)
-		}
-
 		// advance cursor to the last group on this page
 		var maxInitiator, maxFlowID int
 		for _, conv := range threadIDToConv {
@@ -75,8 +70,13 @@ func (c *Converter) MigrateMessages(ctx context.Context) error {
 		}
 		lastInitiator, lastFlowID = maxInitiator, maxFlowID
 
-		if err := c.newDB.MigrationStore().SaveCursorProgress(ctx, StepMessages, lastInitiator, lastFlowID); err != nil {
-			return err
+		if err := c.newDB.MigrationStore().SaveCursorProgressInTx(ctx, tx, StepMessages, lastInitiator, lastFlowID); err != nil {
+			tx.Rollback(ctx)
+			return fail(err)
+		}
+
+		if err := tx.Commit(ctx); err != nil {
+			return fail(err)
 		}
 
 		c.log.Debug("messages page committed", "lastInitiator", lastInitiator, "lastFlowID", lastFlowID, "conversations", len(threadIDToConv))
@@ -142,11 +142,6 @@ func (c *Converter) MigrateMessagesSyncMode(ctx context.Context) error {
 			return fail(err)
 		}
 
-		if err := tx.Commit(ctx); err != nil {
-			tx.Rollback(ctx)
-			return fail(err)
-		}
-
 		// advance cursor to the last group on this page
 		var maxInitiator, maxFlowID int
 		for _, conv := range threadIDToConv {
@@ -157,8 +152,13 @@ func (c *Converter) MigrateMessagesSyncMode(ctx context.Context) error {
 		}
 		lastInitiator, lastFlowID = maxInitiator, maxFlowID
 
-		if err := c.newDB.MigrationStore().SaveCursorProgress(ctx, stepName, lastInitiator, lastFlowID); err != nil {
-			return err
+		if err := c.newDB.MigrationStore().SaveCursorProgressInTx(ctx, tx, stepName, lastInitiator, lastFlowID); err != nil {
+			tx.Rollback(ctx)
+			return fail(err)
+		}
+
+		if err := tx.Commit(ctx); err != nil {
+			return fail(err)
 		}
 
 		c.log.Debug("messages page committed", "lastInitiator", lastInitiator, "lastFlowID", lastFlowID, "conversations", len(threadIDToConv))
