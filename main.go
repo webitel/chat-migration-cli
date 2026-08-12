@@ -17,16 +17,17 @@ import (
 // config holds all runtime configuration loaded from environment variables.
 // All variables are prefixed with MIGRATION_ (e.g. MIGRATION_OLD_DB_DSN).
 type config struct {
-	OldDBDSN      string     // required: postgres DSN for the legacy chat DB
-	NewDBDSN      string     // required: postgres DSN for the new microservices DB
-	OldDBConns    int32      // OLD_DB_MAX_CONNS (default 5)
-	NewDBConns    int32      // NEW_DB_MAX_CONNS (default 10)
-	StartFrom     string     // START_FROM_STEP: skip steps before this one (optional)
-	SingleStep    bool       // SINGLE_STEP: run only the step named by StartFrom, then stop (optional)
-	LogLevel      slog.Level // LOG_LEVEL: debug|info|warn|error (default info)
-	LogJSON       bool       // LOG_JSON: emit JSON instead of text (default false)
-	EncryptionKey string     // required: 32-byte AES-256 key for encrypting tokens
-	Sync          bool       // SYNC mode
+	OldDBDSN             string     // required: postgres DSN for the legacy chat DB
+	NewDBDSN             string     // required: postgres DSN for the new microservices DB
+	OldDBConns           int32      // OLD_DB_MAX_CONNS (default 5)
+	NewDBConns           int32      // NEW_DB_MAX_CONNS (default 10)
+	StartFrom            string     // START_FROM_STEP: skip steps before this one (optional)
+	SingleStep           bool       // SINGLE_STEP: run only the step named by StartFrom, then stop (optional)
+	LogLevel             slog.Level // LOG_LEVEL: debug|info|warn|error (default info)
+	LogJSON              bool       // LOG_JSON: emit JSON instead of text (default false)
+	EncryptionKey        string     // required: 32-byte AES-256 key for encrypting tokens
+	Sync                 bool       // SYNC_MODE
+	MigratePortalClients bool       // MIGRATE_PORTAL_CLIENTS
 }
 
 func main() {
@@ -67,7 +68,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	converter := service.NewConverter(srcDB, dstDB, encryptor, cfg.Sync)
+	converter := service.NewConverter(srcDB, dstDB, encryptor, cfg.Sync, cfg.MigratePortalClients)
 
 	var runErr error
 	switch {
@@ -101,6 +102,7 @@ func mustLoadConfig() config {
 	v.SetDefault("START_FROM_STEP", "")
 	v.SetDefault("SINGLE_STEP", false)
 	v.SetDefault("SYNC_MODE", false)
+	v.SetDefault("MIGRATE_PORTAL_CLIENTS", false)
 
 	oldDSN := v.GetString("OLD_DB_DSN")
 	newDSN := v.GetString("NEW_DB_DSN")
@@ -130,16 +132,17 @@ func mustLoadConfig() config {
 	}
 
 	return config{
-		OldDBDSN:      oldDSN,
-		NewDBDSN:      newDSN,
-		OldDBConns:    int32(v.GetInt("OLD_DB_MAX_CONNS")),
-		NewDBConns:    int32(v.GetInt("NEW_DB_MAX_CONNS")),
-		StartFrom:     startFrom,
-		SingleStep:    singleStep,
-		LogLevel:      level,
-		LogJSON:       v.GetBool("LOG_JSON"),
-		EncryptionKey: encryptionKey,
-		Sync:          v.GetBool("SYNC_MODE"),
+		OldDBDSN:             oldDSN,
+		NewDBDSN:             newDSN,
+		OldDBConns:           int32(v.GetInt("OLD_DB_MAX_CONNS")),
+		NewDBConns:           int32(v.GetInt("NEW_DB_MAX_CONNS")),
+		StartFrom:            startFrom,
+		SingleStep:           singleStep,
+		LogLevel:             level,
+		LogJSON:              v.GetBool("LOG_JSON"),
+		EncryptionKey:        encryptionKey,
+		Sync:                 v.GetBool("SYNC_MODE"),
+		MigratePortalClients: v.GetBool("MIGRATE_PORTAL_CLIENTS"),
 	}
 }
 
