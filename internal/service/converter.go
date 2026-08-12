@@ -14,24 +14,26 @@ import (
 )
 
 const (
-	StepClientsToContacts = "clients_to_contacts"
-	StepBotsToContacts    = "bots_to_contacts"
-	StepConversations     = "conversations"
-	StepMembers           = "members"
-	StepMessages          = "messages"
-	StepGateways          = "gateways"
+	StepClientsToContacts       = "clients_to_contacts"
+	StepPortalClientsToContacts = "portal_client_to_contact"
+	StepBotsToContacts          = "bots_to_contacts"
+	StepConversations           = "conversations"
+	StepMembers                 = "members"
+	StepMessages                = "messages"
+	StepGateways                = "gateways"
 
 	StepFacebookAndWhatsApp = "facebook_and_whatsapp"
 	StepSyncContactVias     = "sync_contact_vias"
 )
 
 const (
-	SyncStepClientsToContacts = "sync_mode_clients_to_contacts"
-	SyncStepBotsToContacts    = "sync_mode_bots_to_contacts"
-	SyncStepConversations     = "sync_mode_conversations"
-	SyncStepMembers           = "sync_mode_members"
-	SyncStepMessages          = "sync_mode_messages"
-	SyncStepGateways          = "sync_mode_gateways"
+	SyncStepClientsToContacts       = "sync_mode_clients_to_contacts"
+	SyncStepPortalClientsToContacts = "sync_mode_portal_client_to_contact"
+	SyncStepBotsToContacts          = "sync_mode_bots_to_contacts"
+	SyncStepConversations           = "sync_mode_conversations"
+	SyncStepMembers                 = "sync_mode_members"
+	SyncStepMessages                = "sync_mode_messages"
+	SyncStepGateways                = "sync_mode_gateways"
 
 	SyncStepFacebookAndWhatsApp = "sync_mode_facebook_and_whatsapp"
 	SyncStepSyncContactVias     = "sync_mode_sync_contact_vias"
@@ -65,7 +67,8 @@ type Converter struct {
 	resolver  *Resolver
 	encryptor *Encryptor
 
-	isSyncMode bool
+	isSyncMode           bool
+	migratePortalClients bool
 }
 
 type MigrationStep struct {
@@ -73,14 +76,15 @@ type MigrationStep struct {
 	Run  func(ctx context.Context) error
 }
 
-func NewConverter(oldDB *olddb.DB, modelnewDB *newdb.DB, encryptor *Encryptor, isSyncMode bool) *Converter {
+func NewConverter(oldDB *olddb.DB, modelnewDB *newdb.DB, encryptor *Encryptor, isSyncMode bool, migratePortalClients bool) *Converter {
 	return &Converter{
-		log:        slog.Default(),
-		oldDB:      oldDB,
-		newDB:      modelnewDB,
-		resolver:   NewResolver(modelnewDB),
-		encryptor:  encryptor,
-		isSyncMode: isSyncMode,
+		log:                  slog.Default(),
+		oldDB:                oldDB,
+		newDB:                modelnewDB,
+		resolver:             NewResolver(modelnewDB),
+		encryptor:            encryptor,
+		isSyncMode:           isSyncMode,
+		migratePortalClients: migratePortalClients,
 	}
 }
 
@@ -164,9 +168,11 @@ func (c *Converter) runStepsFrom(ctx context.Context, startFrom string) error {
 
 	var (
 		firstStepIndex int
+		found          bool
 	)
 	for i, step := range steps {
 		if step.Name == startFrom {
+			found = true
 			if _, alreadyCompleted := completed[step.Name]; alreadyCompleted {
 				if i > 0 {
 					for s, nextUncompletedStep := range steps[i-1:] {
@@ -181,6 +187,10 @@ func (c *Converter) runStepsFrom(ctx context.Context, startFrom string) error {
 			}
 			break
 		}
+	}
+
+	if !found {
+		return fmt.Errorf("unknown migration step: %s", startFrom)
 	}
 
 	for _, step := range steps[firstStepIndex:] {
@@ -241,37 +251,50 @@ func (c *Converter) runSteps(ctx context.Context) error {
 }
 
 func (c *Converter) getMigrationSteps() []MigrationStep {
-	return []MigrationStep{
+	steps := []MigrationStep{
 		{Name: StepClientsToContacts, Run: c.MigrateClientsToContacts},
+	}
+	if c.migratePortalClients {
+		steps = append(steps, MigrationStep{Name: StepPortalClientsToContacts, Run: c.MigratePortalClientsToContacts})
+	}
+	steps = append(steps, []MigrationStep{
 		{Name: StepBotsToContacts, Run: c.MigrateBotsToContacts},
 		{Name: StepConversations, Run: c.MigrateConversations},
 		{Name: StepMembers, Run: c.MigrateMembers},
 		{Name: StepMessages, Run: c.MigrateMessages},
 		{Name: StepFacebookAndWhatsApp, Run: c.MigrateFacebookProviders},
 		{Name: StepSyncContactVias, Run: c.SyncContactsVias},
-	}
+	}...)
+	return steps
 }
 func (c *Converter) getSyncModeMigrationSteps() []MigrationStep {
-	return []MigrationStep{
+	steps := []MigrationStep{
 		{Name: SyncStepClientsToContacts, Run: c.MigrateClientsToContactsSyncMode},
+	}
+	if c.migratePortalClients {
+		steps = append(steps, MigrationStep{Name: SyncStepPortalClientsToContacts, Run: c.MigratePortalClientsToContactsSyncMode})
+	}
+	steps = append(steps, []MigrationStep{
 		{Name: SyncStepBotsToContacts, Run: c.MigrateBotsToContactsSyncMode},
 		{Name: SyncStepConversations, Run: c.MigrateConversationsSyncMode},
 		{Name: SyncStepMembers, Run: c.MigrateMembersSyncMode},
 		{Name: SyncStepMessages, Run: c.MigrateMessagesSyncMode},
 		{Name: SyncStepFacebookAndWhatsApp, Run: c.MigrateFacebookProvidersSyncMode},
 		{Name: SyncStepSyncContactVias, Run: c.SyncContactsVias},
-	}
+	}...)
+	return steps
 }
 
 var stepNameMap = map[string]string{
-	SyncStepMembers:             StepMembers,
-	SyncStepConversations:       StepConversations,
-	SyncStepBotsToContacts:      StepBotsToContacts,
-	SyncStepClientsToContacts:   StepClientsToContacts,
-	SyncStepFacebookAndWhatsApp: StepFacebookAndWhatsApp,
-	SyncStepMessages:            StepMessages,
-	SyncStepSyncContactVias:     StepSyncContactVias,
-	SyncStepGateways:            StepGateways,
+	SyncStepMembers:                 StepMembers,
+	SyncStepConversations:           StepConversations,
+	SyncStepBotsToContacts:          StepBotsToContacts,
+	SyncStepClientsToContacts:       StepClientsToContacts,
+	SyncStepPortalClientsToContacts: StepPortalClientsToContacts,
+	SyncStepFacebookAndWhatsApp:     StepFacebookAndWhatsApp,
+	SyncStepMessages:                StepMessages,
+	SyncStepSyncContactVias:         StepSyncContactVias,
+	SyncStepGateways:                StepGateways,
 }
 
 func (c *Converter) GetStepCompletedAtInTx(ctx context.Context, tx pgx.Tx, step string) (time.Time, error) {

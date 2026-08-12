@@ -16,6 +16,7 @@ Migration runs as an ordered sequence of steps. Each step is idempotent and resu
 | Order | Step | What it does |
 |-------|------|--------------|
 | 1 | `clients_to_contacts` | Migrates external client users to contacts |
+| 1b | `portal_client_to_contact` | Migrates portal clients to contacts (only runs if `MIGRATION_MIGRATE_PORTAL_CLIENTS` is enabled) |
 | 2 | `bots_to_contacts` | Migrates flow bots to contacts |
 | 3 | `conversations` | Groups legacy conversations by `(initiator, flow)` and creates chat threads |
 | 4 | `members` | Creates thread dialog members for all participants |
@@ -32,6 +33,7 @@ Sync mode runs a parallel set of steps prefixed with `sync_mode_`. Each step que
 | Order | Step | What it does |
 |-------|------|--------------|
 | 1 | `sync_mode_clients_to_contacts` | Inserts new clients created since last run; existing records are skipped |
+| 1b | `sync_mode_portal_client_to_contact` | Inserts new portal clients created since last run (only runs if `MIGRATION_MIGRATE_PORTAL_CLIENTS` is enabled) |
 | 2 | `sync_mode_bots_to_contacts` | Inserts new bots created since last run; existing records are skipped |
 | 3 | `sync_mode_conversations` | Creates threads for new conversations; adds new conversation IDs to existing threads for the same `(initiator, flow)` pair |
 | 4 | `sync_mode_members` | Adds full member set to newly created threads; adds only new internal users to existing threads |
@@ -56,6 +58,7 @@ All options are read from environment variables prefixed with `MIGRATION_`.
 | `MIGRATION_OLD_DB_MAX_CONNS` | no | `5` | Connection pool size for the legacy DB |
 | `MIGRATION_NEW_DB_MAX_CONNS` | no | `10` | Connection pool size for the new DB |
 | `MIGRATION_SYNC_MODE` | no | `false` | Run in sync mode instead of full migration mode |
+| `MIGRATION_MIGRATE_PORTAL_CLIENTS` | no | `false` | Include portal clients in the migration (runs `portal_client_to_contact` step) |
 | `MIGRATION_START_FROM_STEP` | no | _(all)_ | Start from this step, skipping earlier ones |
 | `MIGRATION_SINGLE_STEP` | no | `false` | Run only the step named by `MIGRATION_START_FROM_STEP`, then stop. Requires `MIGRATION_START_FROM_STEP` to be set. Resumes a not-yet-completed step from its last saved progress; fails if the step is already completed (outside sync mode - sync-mode steps remain re-runnable) |
 | `MIGRATION_LOG_LEVEL` | no | `info` | Log verbosity: `debug`, `info`, `warn`, `error` |
