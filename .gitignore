@@ -1,0 +1,18 @@
+# Claude Code
+.claude/
+CLAUDE.md
+
+# graphify
+graphify-out/
+
+# docs
+docs/
+
+# Debugger / IDE launch configs
+.vscode/
+.zed/
+__debug_server
+__debug_bin*
+
+# Build output
+chat-migration-cli

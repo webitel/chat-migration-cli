@@ -18,6 +18,7 @@ type DB struct {
 	messageStore        *MessageStore
 	providerStore       *ProviderStore
 	directSettingsStore *DirectSettingsStore
+	appStore            *AppStore
 }
 
 func New(pool *pgxpool.Pool) (*DB, error) {
@@ -108,4 +109,11 @@ func (db *DB) ProviderStore() *ProviderStore {
 		db.providerStore = NewProviderStore(db)
 	}
 	return db.providerStore
+}
+
+func (db *DB) AppStore() *AppStore {
+	if db.appStore == nil {
+		db.appStore = NewAppStore(db)
+	}
+	return db.appStore
 }

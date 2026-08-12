@@ -6,6 +6,7 @@ import "github.com/jackc/pgx/v5/pgxpool"
 type DB struct {
 	pool *pgxpool.Pool
 
+	appStore          *AppStore
 	botStore          *BotStore
 	clientStore       *ClientStore
 	conversationStore *ConversationStore
@@ -17,6 +18,13 @@ func New(pool *pgxpool.Pool) *DB { return &DB{pool: pool} }
 func (db *DB) Pool() *pgxpool.Pool { return db.pool }
 
 func (db *DB) Close() { db.pool.Close() }
+
+func (db *DB) AppStore() *AppStore {
+	if db.appStore == nil {
+		db.appStore = NewAppStore(db)
+	}
+	return db.appStore
+}
 
 func (db *DB) BotStore() *BotStore {
 	if db.botStore == nil {

@@ -16,6 +16,7 @@ import (
 const (
 	StepClientsToContacts       = "clients_to_contacts"
 	StepPortalClientsToContacts = "portal_client_to_contact"
+	StepPortalAppsToAccounts    = "portal_apps_to_accounts"
 	StepBotsToContacts          = "bots_to_contacts"
 	StepConversations           = "conversations"
 	StepMembers                 = "members"
@@ -256,6 +257,7 @@ func (c *Converter) getMigrationSteps() []MigrationStep {
 	}
 	if c.migratePortalClients {
 		steps = append(steps, MigrationStep{Name: StepPortalClientsToContacts, Run: c.MigratePortalClientsToContacts})
+		steps = append(steps, MigrationStep{Name: StepPortalAppsToAccounts, Run: c.MigratePortalAppsToAccounts})
 	}
 	steps = append(steps, []MigrationStep{
 		{Name: StepBotsToContacts, Run: c.MigrateBotsToContacts},
