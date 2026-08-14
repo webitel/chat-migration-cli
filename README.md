@@ -17,6 +17,7 @@ Migration runs as an ordered sequence of steps. Each step is idempotent and resu
 |-------|------|--------------|
 | 1 | `clients_to_contacts` | Migrates external client users to contacts |
 | 1b | `portal_client_to_contact` | Migrates portal clients to contacts (only runs if `MIGRATION_MIGRATE_PORTAL_CLIENTS` is enabled) |
+| 1c | `portal_apps_to_accounts` | Migrates portal service apps to accounts (only runs if `MIGRATION_MIGRATE_PORTAL_CLIENTS` is enabled). No sync-mode counterpart |
 | 2 | `bots_to_contacts` | Migrates flow bots to contacts |
 | 3 | `conversations` | Groups legacy conversations by `(initiator, flow)` and creates chat threads |
 | 4 | `members` | Creates thread dialog members for all participants |
@@ -58,7 +59,7 @@ All options are read from environment variables prefixed with `MIGRATION_`.
 | `MIGRATION_OLD_DB_MAX_CONNS` | no | `5` | Connection pool size for the legacy DB |
 | `MIGRATION_NEW_DB_MAX_CONNS` | no | `10` | Connection pool size for the new DB |
 | `MIGRATION_SYNC_MODE` | no | `false` | Run in sync mode instead of full migration mode |
-| `MIGRATION_MIGRATE_PORTAL_CLIENTS` | no | `false` | Include portal clients in the migration (runs `portal_client_to_contact` step) |
+| `MIGRATION_MIGRATE_PORTAL_CLIENTS` | no | `false` | Include portal clients in the migration (runs `portal_client_to_contact` and `portal_apps_to_accounts` steps) |
 | `MIGRATION_START_FROM_STEP` | no | _(all)_ | Start from this step, skipping earlier ones |
 | `MIGRATION_SINGLE_STEP` | no | `false` | Run only the step named by `MIGRATION_START_FROM_STEP`, then stop. Requires `MIGRATION_START_FROM_STEP` to be set. Resumes a not-yet-completed step from its last saved progress; fails if the step is already completed (outside sync mode - sync-mode steps remain re-runnable) |
 | `MIGRATION_LOG_LEVEL` | no | `info` | Log verbosity: `debug`, `info`, `warn`, `error` |
