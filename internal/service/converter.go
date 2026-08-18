@@ -73,11 +73,20 @@ type Converter struct {
 
 	isSyncMode           bool
 	migratePortalClients bool
+	stepRecordsMigrated  int64
 }
 
 type MigrationStep struct {
 	Name string
 	Run  func(ctx context.Context) error
+}
+
+// StepDuration records how long a single migration step took to execute,
+// and how many records were migrated during that step.
+type StepDuration struct {
+	Name            string
+	Duration        time.Duration
+	RecordsMigrated int64
 }
 
 func NewConverter(oldDB *olddb.DB, modelnewDB *newdb.DB, encryptor *Encryptor, isSyncMode bool, migratePortalClients bool) *Converter {
@@ -138,13 +147,18 @@ func (c *Converter) runSingleStep(ctx context.Context, stepName string) error {
 	}
 
 	c.log.Info("migration step started", "step", step.Name)
+	c.resetStepRecordsMigrated()
+	stepStart := time.Now()
 	if err := step.Run(ctx); err != nil {
 		return err
 	}
+	duration := time.Since(stepStart)
+	recordsMigrated := c.stepRecordsMigrated
 	if err := c.newDB.MigrationStore().MarkStepCompleted(ctx, step.Name); err != nil {
 		return err
 	}
 	c.log.Info("migration step completed", "step", step.Name)
+	c.logStepDurations([]StepDuration{{Name: step.Name, Duration: duration, RecordsMigrated: recordsMigrated}})
 	return nil
 }
 
@@ -197,6 +211,7 @@ func (c *Converter) runStepsFrom(ctx context.Context, startFrom string) error {
 		return fmt.Errorf("unknown migration step: %s", startFrom)
 	}
 
+	durations := make([]StepDuration, 0, len(steps)-firstStepIndex)
 	for _, step := range steps[firstStepIndex:] {
 		if _, ok := completed[step.Name]; ok {
 			c.log.Info("migration step already completed, skipping", "step", step.Name)
@@ -204,15 +219,21 @@ func (c *Converter) runStepsFrom(ctx context.Context, startFrom string) error {
 		}
 
 		c.log.Info("migration step started", "step", step.Name)
+		c.resetStepRecordsMigrated()
+		stepStart := time.Now()
 		if err := step.Run(ctx); err != nil {
+			c.logStepDurations(durations)
 			return err
 		}
+		durations = append(durations, StepDuration{Name: step.Name, Duration: time.Since(stepStart), RecordsMigrated: c.stepRecordsMigrated})
 
 		if err := c.newDB.MigrationStore().MarkStepCompleted(ctx, step.Name); err != nil {
+			c.logStepDurations(durations)
 			return err
 		}
 		c.log.Info("migration step completed", "step", step.Name)
 	}
+	c.logStepDurations(durations)
 	return nil
 }
 
@@ -235,6 +256,7 @@ func (c *Converter) runSteps(ctx context.Context) error {
 		}
 	}
 
+	durations := make([]StepDuration, 0, len(steps))
 	for _, step := range steps {
 		if _, ok := completed[step.Name]; ok {
 			c.log.Info("migration step already completed, skipping", "step", step.Name)
@@ -242,16 +264,51 @@ func (c *Converter) runSteps(ctx context.Context) error {
 		}
 
 		c.log.Info("migration step started", "step", step.Name)
+		c.resetStepRecordsMigrated()
+		stepStart := time.Now()
 		if err := step.Run(ctx); err != nil {
+			c.logStepDurations(durations)
 			return err
 		}
+		durations = append(durations, StepDuration{Name: step.Name, Duration: time.Since(stepStart), RecordsMigrated: c.stepRecordsMigrated})
 
 		if err := c.newDB.MigrationStore().MarkStepCompleted(ctx, step.Name); err != nil {
+			c.logStepDurations(durations)
 			return err
 		}
 		c.log.Info("migration step completed", "step", step.Name)
 	}
+	c.logStepDurations(durations)
 	return nil
+}
+
+func (c *Converter) resetStepRecordsMigrated() {
+	c.stepRecordsMigrated = 0
+}
+
+func (c *Converter) addRecordsMigrated(n int) {
+	c.stepRecordsMigrated += int64(n)
+}
+
+// logStepDurations emits a summary report of how long each executed
+// migration step took, how many records were migrated, plus the total
+// elapsed time and record count across all of them.
+// It is a no-op when durations is empty (e.g. every step in the run was
+// already completed and skipped).
+func (c *Converter) logStepDurations(durations []StepDuration) {
+	if len(durations) == 0 {
+		return
+	}
+	var (
+		total        time.Duration
+		totalRecords int64
+	)
+	for _, d := range durations {
+		total += d.Duration
+		totalRecords += d.RecordsMigrated
+		c.log.Info("migration step duration", "step", d.Name, "duration", d.Duration.String(), "records_migrated", d.RecordsMigrated)
+	}
+	c.log.Info("migration duration summary", "steps", len(durations), "total_duration", total.String(), "total_records_migrated", totalRecords)
 }
 
 func (c *Converter) getMigrationSteps() []MigrationStep {

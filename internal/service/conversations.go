@@ -70,6 +70,8 @@ func (c *Converter) MigrateConversations(ctx context.Context) error {
 			return err
 		}
 
+		c.addRecordsMigrated(len(threads))
+
 		if len(groupedConversations) < perPage {
 			break
 		}
@@ -211,6 +213,8 @@ func (c *Converter) MigrateConversationsSyncMode(ctx context.Context) error {
 			tx.Rollback(ctx)
 			return err
 		}
+
+		c.addRecordsMigrated(len(threads))
 
 		if originalCount < perPage {
 			break

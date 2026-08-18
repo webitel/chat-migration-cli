@@ -67,9 +67,9 @@ func (s *ContactStore) InsertContacts(ctx context.Context, tx pgx.Tx, contacts [
 	return nil
 
 }
-func (s *ContactStore) InsertContactsIgnoreConflicts(ctx context.Context, tx pgx.Tx, contacts []*new.Contact) error {
+func (s *ContactStore) InsertContactsIgnoreConflicts(ctx context.Context, tx pgx.Tx, contacts []*new.Contact) (int64, error) {
 	if len(contacts) == 0 {
-		return nil
+		return 0, nil
 	}
 	var (
 		query = squirrel.Insert("im_contact.contact").Columns(
@@ -107,19 +107,19 @@ func (s *ContactStore) InsertContactsIgnoreConflicts(ctx context.Context, tx pgx
 
 	sql, args, err := query.ToSql()
 	if err != nil {
-		return err
+		return 0, err
 	}
 
-	_, err = tx.Exec(ctx, sql, args...)
+	tag, err := tx.Exec(ctx, sql, args...)
 	if err != nil {
-		return err
+		return 0, err
 	}
 
-	return nil
+	return tag.RowsAffected(), nil
 
 }
 
-func (s *ContactStore) SyncContactVias(ctx context.Context, tx pgx.Tx) error {
+func (s *ContactStore) SyncContactVias(ctx context.Context, tx pgx.Tx) (int64, error) {
 	query := `WITH chain AS (SELECT ct.new_id contact_id, gt.new_id gate_id
                FROM public.chat_migration ct
                         LEFT JOIN public.chat_migration gt
@@ -133,11 +133,11 @@ SELECT contact_id, gate_id
 FROM chain
 ON CONFLICT (contact_id, via) DO NOTHING;
 `
-	_, err := tx.Exec(ctx, query)
+	tag, err := tx.Exec(ctx, query)
 	if err != nil {
-		return err
+		return 0, err
 	}
-	return nil
+	return tag.RowsAffected(), nil
 }
 
 func (s *ContactStore) GetByWebitelUserIDs(ctx context.Context, tx pgx.Tx, webitelUserIDs []string) ([]*new.Contact, error) {

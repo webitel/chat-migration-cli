@@ -65,6 +65,8 @@ func (c *Converter) MigrateMessages(ctx context.Context) error {
 			return fail(err)
 		}
 
+		c.addRecordsMigrated(len(messages))
+
 		// advance cursor to the last group on this page
 		var maxInitiator, maxFlowID int
 		for _, conv := range threadIDToConv {
@@ -146,6 +148,8 @@ func (c *Converter) MigrateMessagesSyncMode(ctx context.Context) error {
 			tx.Rollback(ctx)
 			return fail(err)
 		}
+
+		c.addRecordsMigrated(len(messages))
 
 		// advance cursor to the last group on this page
 		var maxInitiator, maxFlowID int

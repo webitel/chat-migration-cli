@@ -56,6 +56,7 @@ func (c *Converter) MigratePortalAppsToAccounts(ctx context.Context) error {
 		if err := c.newDB.MigrationStore().InsertMigrations(ctx, tx, migrationRows); err != nil {
 			return false, fmt.Errorf("insert migration rows: %w", err)
 		}
+		c.addRecordsMigrated(len(convertedApps))
 		return iterate, nil
 	})
 	if err != nil {
