@@ -78,6 +78,9 @@ func (c *Converter) MigrateMembers(ctx context.Context) error {
 			tx.Rollback(ctx)
 			return errors.Join(errors.New("failed to insert migration rows for thread dialogs"), err)
 		}
+
+		c.addRecordsMigrated(len(threadDialogs))
+
 		if len(groupedConversations) < perPage {
 			break
 		}
@@ -171,6 +174,9 @@ func (c *Converter) MigrateMembersSyncMode(ctx context.Context) error {
 			tx.Rollback(ctx)
 			return errors.Join(errors.New("failed to insert migration rows for thread dialogs"), err)
 		}
+
+		c.addRecordsMigrated(len(threadDialogs))
+
 		if len(groupedConversations) < perPage {
 			break
 		}
@@ -316,7 +322,7 @@ func (c *Converter) restoreBotFromConversation(ctx context.Context, conversation
 			Username:  fmt.Sprintf("flow_%d_bot", conversation.FlowID),
 			IsBot:     true,
 		}
-		err := c.newDB.ContactStore().InsertContactsIgnoreConflicts(ctx, tx, []*modelnew.Contact{bot})
+		_, err := c.newDB.ContactStore().InsertContactsIgnoreConflicts(ctx, tx, []*modelnew.Contact{bot})
 		if err != nil {
 			return nil, err
 		}
@@ -432,7 +438,7 @@ func (c *Converter) restoreWebitelUser(ctx context.Context, tx pgx.Tx, user *old
 		Username:  buildUsername(name, "webitel", strconv.Itoa(user.UserID)),
 		IsBot:     false,
 	}
-	err := c.newDB.ContactStore().InsertContactsIgnoreConflicts(ctx, tx, []*modelnew.Contact{newContact})
+	_, err := c.newDB.ContactStore().InsertContactsIgnoreConflicts(ctx, tx, []*modelnew.Contact{newContact})
 	if err != nil {
 		return nil, err
 	}

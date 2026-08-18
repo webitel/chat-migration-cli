@@ -55,8 +55,13 @@ func main() {
 	}
 	defer newPool.Close()
 
-	srcDB := olddb.New(oldPool)
-	dstDB, err := newdb.New(newPool)
+	srcDB, err := olddb.New(oldPool, cfg.MigratePortalClients)
+	if err != nil {
+		log.Error("source DB init failed", "error", err)
+		os.Exit(1)
+	}
+
+	dstDB, err := newdb.New(newPool, cfg.MigratePortalClients)
 	if err != nil {
 		log.Error("destination DB init failed", "error", err)
 		os.Exit(1)

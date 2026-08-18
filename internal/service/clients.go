@@ -63,6 +63,7 @@ func (c *Converter) MigrateClientsToContacts(ctx context.Context) error {
 		if err := c.newDB.MigrationStore().InsertMigrations(ctx, tx, migrationRows); err != nil {
 			return false, err
 		}
+		c.addRecordsMigrated(len(contacts))
 		return iterate, nil
 	})
 	if err != nil {
@@ -125,12 +126,14 @@ func (c *Converter) MigrateClientsToContactsSyncMode(ctx context.Context) error 
 
 			}
 		}
-		if err := c.newDB.ContactStore().InsertContactsIgnoreConflicts(ctx, tx, contacts); err != nil {
+		rowsAffected, err := c.newDB.ContactStore().InsertContactsIgnoreConflicts(ctx, tx, contacts)
+		if err != nil {
 			return false, err
 		}
 		if err := c.newDB.MigrationStore().InsertMigrations(ctx, tx, migrationRows); err != nil {
 			return false, err
 		}
+		c.addRecordsMigrated(int(rowsAffected))
 		return iterate, nil
 	})
 	if err != nil {
@@ -180,6 +183,7 @@ func (c *Converter) MigratePortalClientsToContacts(ctx context.Context) error {
 		if err := c.newDB.MigrationStore().InsertMigrations(ctx, tx, migrationRows); err != nil {
 			return false, err
 		}
+		c.addRecordsMigrated(len(contacts))
 		return iterate, nil
 	})
 	if err != nil {
@@ -231,12 +235,14 @@ func (c *Converter) MigratePortalClientsToContactsSyncMode(ctx context.Context) 
 			})
 
 		}
-		if err := c.newDB.ContactStore().InsertContactsIgnoreConflicts(ctx, tx, contacts); err != nil {
+		rowsAffected, err := c.newDB.ContactStore().InsertContactsIgnoreConflicts(ctx, tx, contacts)
+		if err != nil {
 			return false, err
 		}
 		if err := c.newDB.MigrationStore().InsertMigrations(ctx, tx, migrationRows); err != nil {
 			return false, err
 		}
+		c.addRecordsMigrated(int(rowsAffected))
 		return iterate, nil
 	})
 	if err != nil {

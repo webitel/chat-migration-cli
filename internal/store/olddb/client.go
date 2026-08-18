@@ -124,11 +124,8 @@ func (s *ClientStore) GetPortalClients(ctx context.Context, offset int, limit in
             WHERE i.top = acc.profile_id
             ORDER BY i.updated_at DESC
             LIMIT 1) credentials_identity ON TRUE
-				JOIN LATERAL (SELECT *
-            FROM portal.identity i
-            WHERE i.id = acc.profile_id
-            ORDER BY i.updated_at DESC
-            LIMIT 1) merged_identity ON TRUE
+            JOIN portal.identity merged_identity
+                ON merged_identity.id = acc.profile_id
 				WHERE c.type = 'portal'
 				ORDER BY c.id`
 	)

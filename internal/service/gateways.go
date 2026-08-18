@@ -109,6 +109,7 @@ func (c *Converter) MigrateFacebookProviders(ctx context.Context) error {
 		if err != nil {
 			return false, err
 		}
+		c.addRecordsMigrated(len(gates))
 		return iterate, nil
 	})
 
@@ -214,6 +215,7 @@ func (c *Converter) MigrateFacebookProvidersSyncMode(ctx context.Context) error 
 		if err != nil {
 			return false, err
 		}
+		c.addRecordsMigrated(len(gates))
 		return iterate, nil
 	})
 
