@@ -106,22 +106,31 @@ AND ($3::timestamp IS NULL OR c.created_at >= $3::timestamp)`
 func (s *ClientStore) GetPortalClients(ctx context.Context, offset int, limit int) ([]*old.PortalClient, error) {
 	var (
 		query = `SELECT c.id,
-			i."name" AS name,
-			i.phone_number AS number,
-			acc.created_at AS created_at,
-			acc.updated_at AS updated_at,
-			acc.profile_id AS profile_id,
-			i.given_name AS first_name,
-			i.family_name AS last_name,
-			'portal' AS type,
-			acc.dc AS dc,
-			i.sub AS sub,
-			i.iss AS iss
-		FROM chat.client c
-		INNER JOIN portal.user_account acc ON acc.id = c.external_id::uuid
-		INNER JOIN portal.identity i ON i.top = acc.profile_id
-		WHERE c.type = 'portal' AND c.external_id ~ '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
-		ORDER BY c.id`
+					merged_identity."name" AS name,
+					merged_identity.phone_number AS number,
+					acc.created_at AS created_at,
+					acc.updated_at AS updated_at,
+					acc.profile_id AS profile_id,
+					merged_identity.given_name AS first_name,
+					merged_identity.family_name AS last_name,
+					'portal' AS type,
+					acc.dc AS dc,
+					credentials_identity.sub AS sub,
+					credentials_identity.iss AS iss
+				FROM chat.client c
+				INNER JOIN portal.user_account acc ON acc.id = c.external_id::uuid
+				JOIN LATERAL (SELECT *
+            FROM portal.identity i
+            WHERE i.top = acc.profile_id
+            ORDER BY i.updated_at DESC
+            LIMIT 1) credentials_identity ON TRUE
+				JOIN LATERAL (SELECT *
+            FROM portal.identity i
+            WHERE i.id = acc.profile_id
+            ORDER BY i.updated_at DESC
+            LIMIT 1) merged_identity ON TRUE
+				WHERE c.type = 'portal'
+				ORDER BY c.id`
 	)
 	if offset < 0 {
 		offset = 0

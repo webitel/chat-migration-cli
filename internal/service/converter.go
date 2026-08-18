@@ -48,13 +48,16 @@ func NewResolver(db *newdb.DB) *Resolver {
 	return &Resolver{db: db}
 }
 
-func (r *Resolver) ResolveMigrationRow(ctx context.Context, tx pgx.Tx, entityType modelnew.EntityType, oldID string, extraKey string, domainID int) (*modelnew.MigrationRow, error) {
-	return r.db.MigrationStore().GetMigrationRow(ctx, tx, &modelnew.MigrationRowFilters{
-		Type:      []modelnew.EntityType{entityType},
-		OldIDs:    []string{oldID},
-		ExtraKeys: []string{extraKey},
-		DomainID:  domainID,
-	})
+func (r *Resolver) ResolveMigrationRow(ctx context.Context, tx pgx.Tx, entityType modelnew.EntityType, oldID string, extraKey *string, domainID int) (*modelnew.MigrationRow, error) {
+	filters := &modelnew.MigrationRowFilters{
+		Type:     []modelnew.EntityType{entityType},
+		OldIDs:   []string{oldID},
+		DomainID: domainID,
+	}
+	if extraKey != nil {
+		filters.ExtraKeys = []string{*extraKey}
+	}
+	return r.db.MigrationStore().GetMigrationRow(ctx, tx, filters)
 }
 
 func (r *Resolver) ResolveMigrationRows(ctx context.Context, tx pgx.Tx, filters *modelnew.MigrationRowFilters) ([]*modelnew.MigrationRow, error) {
