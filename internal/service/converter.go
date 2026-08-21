@@ -73,6 +73,7 @@ type Converter struct {
 
 	isSyncMode           bool
 	migratePortalClients bool
+	botMappingTable      string
 	stepRecordsMigrated  int64
 }
 
@@ -89,7 +90,7 @@ type StepDuration struct {
 	RecordsMigrated int64
 }
 
-func NewConverter(oldDB *olddb.DB, modelnewDB *newdb.DB, encryptor *Encryptor, isSyncMode bool, migratePortalClients bool) *Converter {
+func NewConverter(oldDB *olddb.DB, modelnewDB *newdb.DB, encryptor *Encryptor, isSyncMode bool, migratePortalClients bool, botMappingTable string) *Converter {
 	return &Converter{
 		log:                  slog.Default(),
 		oldDB:                oldDB,
@@ -98,6 +99,7 @@ func NewConverter(oldDB *olddb.DB, modelnewDB *newdb.DB, encryptor *Encryptor, i
 		encryptor:            encryptor,
 		isSyncMode:           isSyncMode,
 		migratePortalClients: migratePortalClients,
+		botMappingTable:      botMappingTable,
 	}
 }
 

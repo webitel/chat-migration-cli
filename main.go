@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -28,6 +29,7 @@ type config struct {
 	EncryptionKey        string     // required: 32-byte AES-256 key for encrypting tokens
 	Sync                 bool       // SYNC_MODE
 	MigratePortalClients bool       // MIGRATE_PORTAL_CLIENTS
+	BotMappingTable      string     // BOT_MAPPING_TABLE: schema.table; optional, empty disables pre-existing bot mapping
 }
 
 func main() {
@@ -73,7 +75,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	converter := service.NewConverter(srcDB, dstDB, encryptor, cfg.Sync, cfg.MigratePortalClients)
+	converter := service.NewConverter(srcDB, dstDB, encryptor, cfg.Sync, cfg.MigratePortalClients, cfg.BotMappingTable)
 
 	var runErr error
 	switch {
@@ -108,6 +110,7 @@ func mustLoadConfig() config {
 	v.SetDefault("SINGLE_STEP", false)
 	v.SetDefault("SYNC_MODE", false)
 	v.SetDefault("MIGRATE_PORTAL_CLIENTS", false)
+	v.SetDefault("BOT_MAPPING_TABLE", "")
 
 	oldDSN := v.GetString("OLD_DB_DSN")
 	newDSN := v.GetString("NEW_DB_DSN")
@@ -136,6 +139,14 @@ func mustLoadConfig() config {
 		level = slog.LevelInfo
 	}
 
+	botMappingTable := v.GetString("BOT_MAPPING_TABLE")
+	if botMappingTable != "" {
+		schema, table, ok := strings.Cut(botMappingTable, ".")
+		if !ok || strings.TrimSpace(schema) == "" || strings.TrimSpace(table) == "" {
+			slog.Error("MIGRATION_BOT_MAPPING_TABLE must be in \"schema.table\" format", "value", botMappingTable)
+			os.Exit(1)
+		}
+	}
 	return config{
 		OldDBDSN:             oldDSN,
 		NewDBDSN:             newDSN,
@@ -148,6 +159,7 @@ func mustLoadConfig() config {
 		EncryptionKey:        encryptionKey,
 		Sync:                 v.GetBool("SYNC_MODE"),
 		MigratePortalClients: v.GetBool("MIGRATE_PORTAL_CLIENTS"),
+		BotMappingTable:      botMappingTable,
 	}
 }
 
