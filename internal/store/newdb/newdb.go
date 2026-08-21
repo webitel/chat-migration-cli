@@ -19,6 +19,7 @@ type DB struct {
 	providerStore       *ProviderStore
 	directSettingsStore *DirectSettingsStore
 	appStore            *AppStore
+	botMappingStore     *BotMappingStore
 }
 
 func New(pool *pgxpool.Pool, migratePortals bool) (*DB, error) {
@@ -121,4 +122,11 @@ func (db *DB) AppStore() *AppStore {
 		db.appStore = NewAppStore(db)
 	}
 	return db.appStore
+}
+
+func (db *DB) BotMappingStore() *BotMappingStore {
+	if db.botMappingStore == nil {
+		db.botMappingStore = NewBotMappingStore(db)
+	}
+	return db.botMappingStore
 }
