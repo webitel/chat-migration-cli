@@ -21,26 +21,45 @@ import (
 )
 
 func (c *Converter) MigrateFacebookProviders(ctx context.Context) error {
-	var (
+	const (
 		perPage = 1000
 	)
 	c.log.Debug("starting facebook/whatsapp providers migration")
-	tx, err := c.newDB.Pool().Begin(ctx)
+
+	startOffset, err := c.newDB.MigrationStore().GetStepProgress(ctx, StepFacebookAndWhatsApp)
 	if err != nil {
 		return err
 	}
+	if startOffset > 0 {
+		c.log.Info("resuming facebook/whatsapp providers migration", "startOffset", startOffset)
+	}
+
+	lastCommittedOffset := startOffset
+	fail := func(cause error) error {
+		_ = c.newDB.MigrationStore().MarkStepFailed(ctx, StepFacebookAndWhatsApp, lastCommittedOffset, cause.Error())
+		return cause
+	}
+
 	err = PagerFunc(ctx, perPage, func(ctx context.Context, offset, limit int) (bool, error) {
-		iterate := true
-		providers, err := c.oldDB.BotStore().GetMetaGateways(ctx, offset, limit)
+		tx, err := c.newDB.Pool().Begin(ctx)
 		if err != nil {
+			return false, err
+		}
+
+		iterate := true
+		absOffset := offset + startOffset
+		providers, err := c.oldDB.BotStore().GetMetaGateways(ctx, absOffset, limit)
+		if err != nil {
+			tx.Rollback(ctx)
 			return false, err
 		}
 		if len(providers) < limit {
 			iterate = false
 		}
-		c.log.Debug("providers page fetched", "offset", offset, "count", len(providers))
+		c.log.Debug("providers page fetched", "offset", absOffset, "count", len(providers))
 		appsOldNewMap, gatesOldNewMap, err := c.BuildMetaGates(providers)
 		if err != nil {
+			tx.Rollback(ctx)
 			return false, err
 		}
 		var (
@@ -87,66 +106,105 @@ func (c *Converter) MigrateFacebookProviders(ctx context.Context) error {
 		}
 		err = c.newDB.ProviderStore().InsertMetaApps(ctx, tx, apps)
 		if err != nil {
+			tx.Rollback(ctx)
 			return false, err
 		}
 		err = c.newDB.ProviderStore().InsertGates(ctx, tx, gates)
 		if err != nil {
+			tx.Rollback(ctx)
 			return false, err
 		}
 		err = c.newDB.ProviderStore().InsertFacebooks(ctx, tx, pages)
 		if err != nil {
+			tx.Rollback(ctx)
 			return false, err
 		}
 		err = c.newDB.ProviderStore().InsertGateWABAs(ctx, tx, wabas)
 		if err != nil {
+			tx.Rollback(ctx)
 			return false, err
 		}
 		err = c.newDB.ProviderStore().InsertBots(ctx, tx, bots)
 		if err != nil {
+			tx.Rollback(ctx)
 			return false, err
 		}
 		err = c.newDB.MigrationStore().InsertMigrations(ctx, tx, migrationRows)
 		if err != nil {
+			tx.Rollback(ctx)
 			return false, err
 		}
+
+		if err := c.newDB.MigrationStore().SaveStepProgressInTx(ctx, tx, StepFacebookAndWhatsApp, absOffset+limit); err != nil {
+			tx.Rollback(ctx)
+			return false, err
+		}
+
+		if err := tx.Commit(ctx); err != nil {
+			return false, err
+		}
+		lastCommittedOffset = absOffset + limit
+
+		c.log.Debug("providers page committed", "offset", absOffset, "count", len(providers))
 		c.addRecordsMigrated(len(gates))
 		return iterate, nil
 	})
 
 	if err != nil {
-		tx.Rollback(ctx)
-		return err
+		return fail(err)
 	}
-	return tx.Commit(ctx)
+	return nil
 }
 func (c *Converter) MigrateFacebookProvidersSyncMode(ctx context.Context) error {
-	var (
-		perPage = 1000
+	const (
+		perPage  = 1000
+		stepName = SyncStepFacebookAndWhatsApp
 	)
 	c.log.Debug("starting facebook/whatsapp providers migration")
-	tx, err := c.newDB.Pool().Begin(ctx)
+
+	startOffset, err := c.newDB.MigrationStore().GetStepProgress(ctx, stepName)
 	if err != nil {
 		return err
 	}
-	completedAt, err := c.GetStepCompletedAtInTx(ctx, tx, SyncStepFacebookAndWhatsApp)
+	if startOffset > 0 {
+		c.log.Info("resuming facebook/whatsapp providers migration", "startOffset", startOffset)
+	}
+
+	completedAt, err := c.GetStepCompletedAt(ctx, stepName)
 	if err != nil {
 		return err
 	}
+
+	lastCommittedOffset := startOffset
+	fail := func(cause error) error {
+		_ = c.newDB.MigrationStore().MarkStepFailed(ctx, stepName, lastCommittedOffset, cause.Error())
+		return cause
+	}
+
 	err = PagerFunc(ctx, perPage, func(ctx context.Context, offset, limit int) (bool, error) {
-		iterate := true
-		providers, err := c.oldDB.BotStore().GetMetaGatewaysFromDate(ctx, offset, limit, completedAt)
+		tx, err := c.newDB.Pool().Begin(ctx)
 		if err != nil {
 			return false, err
 		}
+
+		iterate := true
+		absOffset := offset + startOffset
+		providers, err := c.oldDB.BotStore().GetMetaGatewaysFromDate(ctx, absOffset, limit, completedAt)
+		if err != nil {
+			tx.Rollback(ctx)
+			return false, err
+		}
 		if len(providers) == 0 {
+			tx.Rollback(ctx)
 			return false, nil
 		}
 		if len(providers) < limit {
 			iterate = false
 		}
-		c.log.Debug("providers page fetched", "offset", offset, "count", len(providers))
+		c.log.Debug("providers page fetched", "offset", absOffset, "count", len(providers))
 		appsOldNewMap, gatesOldNewMap, err := c.BuildMetaGates(providers)
 		if err != nil {
+			tx.Rollback(ctx)
 			return false, err
 		}
 		var (
@@ -193,37 +251,54 @@ func (c *Converter) MigrateFacebookProvidersSyncMode(ctx context.Context) error 
 		}
 		err = c.newDB.ProviderStore().InsertMetaApps(ctx, tx, apps)
 		if err != nil {
+			tx.Rollback(ctx)
 			return false, err
 		}
 		err = c.newDB.ProviderStore().InsertGates(ctx, tx, gates)
 		if err != nil {
+			tx.Rollback(ctx)
 			return false, err
 		}
 		err = c.newDB.ProviderStore().InsertFacebooks(ctx, tx, pages)
 		if err != nil {
+			tx.Rollback(ctx)
 			return false, err
 		}
 		err = c.newDB.ProviderStore().InsertGateWABAs(ctx, tx, wabas)
 		if err != nil {
+			tx.Rollback(ctx)
 			return false, err
 		}
 		err = c.newDB.ProviderStore().InsertBots(ctx, tx, bots)
 		if err != nil {
+			tx.Rollback(ctx)
 			return false, err
 		}
 		err = c.newDB.MigrationStore().InsertMigrations(ctx, tx, migrationRows)
 		if err != nil {
+			tx.Rollback(ctx)
 			return false, err
 		}
+
+		if err := c.newDB.MigrationStore().SaveStepProgressInTx(ctx, tx, stepName, absOffset+limit); err != nil {
+			tx.Rollback(ctx)
+			return false, err
+		}
+
+		if err := tx.Commit(ctx); err != nil {
+			return false, err
+		}
+		lastCommittedOffset = absOffset + limit
+
+		c.log.Debug("providers page committed", "offset", absOffset, "count", len(providers))
 		c.addRecordsMigrated(len(gates))
 		return iterate, nil
 	})
 
 	if err != nil {
-		tx.Rollback(ctx)
-		return err
+		return fail(err)
 	}
-	return tx.Commit(ctx)
+	return nil
 }
 
 func (c *Converter) BuildMetaGates(providers []*modelold.Provider[modelold.FBProviderMetadata]) (map[int]*modelnew.MetaApp, map[int][]*modelnew.Gate, error) {

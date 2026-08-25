@@ -20,12 +20,26 @@ func (c *Converter) MigrateMembers(ctx context.Context) error {
 		perPage = 1000
 	)
 	c.log.Debug("starting members migration")
-	tx, err := c.newDB.Pool().Begin(ctx)
+
+	lastInitiator, lastFlowID, err := c.newDB.MigrationStore().GetCursorProgress(ctx, StepMembers)
 	if err != nil {
 		return err
 	}
-	var lastInitiator, lastFlowID int
+	if lastInitiator > 0 || lastFlowID > 0 {
+		c.log.Info("resuming members migration", "lastInitiator", lastInitiator, "lastFlowID", lastFlowID)
+	}
+
+	fail := func(cause error) error {
+		_ = c.newDB.MigrationStore().MarkStepFailed(ctx, StepMembers, 0, cause.Error())
+		return cause
+	}
+
 	for {
+		tx, err := c.newDB.Pool().Begin(ctx)
+		if err != nil {
+			return fail(err)
+		}
+
 		var (
 			threadDialogs  []*modelnew.ThreadDialog
 			migrationRows  []*modelnew.MigrationRow
@@ -34,9 +48,10 @@ func (c *Converter) MigrateMembers(ctx context.Context) error {
 		groupedConversations, err := c.oldDB.ConversationStore().GetGroupedConversationsByUsersAndFlow(ctx, lastInitiator, lastFlowID, perPage)
 		if err != nil {
 			tx.Rollback(ctx)
-			return err
+			return fail(err)
 		}
 		if len(groupedConversations) == 0 {
+			tx.Rollback(ctx)
 			break
 		}
 		c.log.Debug("members page fetched", "lastInitiator", lastInitiator, "lastFlowID", lastFlowID, "count", len(groupedConversations))
@@ -51,7 +66,7 @@ func (c *Converter) MigrateMembers(ctx context.Context) error {
 			thread, err := c.resolver.ResolveMigrationRow(ctx, tx, modelnew.EntityTypeConversationThread, groupedConv.ConvIDs[0].String(), nil, groupedConv.DomainID)
 			if err != nil {
 				tx.Rollback(ctx)
-				return errors.Join(errors.New("failed to resolve migration row for conversation thread "+groupedConv.ConvIDs[0].String()), err)
+				return fail(errors.Join(errors.New("failed to resolve migration row for conversation thread "+groupedConv.ConvIDs[0].String()), err))
 			}
 			dialogs, settings, rows, err := c.buildThreadDialogsFromConversation(ctx, tx, groupedConv, thread.NewID)
 			if err != nil {
@@ -60,7 +75,7 @@ func (c *Converter) MigrateMembers(ctx context.Context) error {
 					continue
 				}
 				tx.Rollback(ctx)
-				return errors.Join(errors.New("failed to build thread dialogs from conversation"), err)
+				return fail(errors.Join(errors.New("failed to build thread dialogs from conversation"), err))
 			}
 			threadDialogs = append(threadDialogs, dialogs...)
 			migrationRows = append(migrationRows, rows...)
@@ -68,27 +83,44 @@ func (c *Converter) MigrateMembers(ctx context.Context) error {
 		}
 		if err := c.newDB.ThreadDialogStore().InsertThreadDialogs(ctx, tx, threadDialogs); err != nil {
 			tx.Rollback(ctx)
-			return errors.Join(errors.New("failed to insert thread dialogs"), err)
+			return fail(errors.Join(errors.New("failed to insert thread dialogs"), err))
 		}
 		if err := c.newDB.DirectSettingsStore().InsertDirectSettings(ctx, tx, threadSettings); err != nil {
 			tx.Rollback(ctx)
-			return errors.Join(errors.New("failed to insert direct settings"), err)
+			return fail(errors.Join(errors.New("failed to insert direct settings"), err))
 		}
 		if err := c.newDB.MigrationStore().InsertMigrations(ctx, tx, migrationRows); err != nil {
 			tx.Rollback(ctx)
-			return errors.Join(errors.New("failed to insert migration rows for thread dialogs"), err)
+			return fail(errors.Join(errors.New("failed to insert migration rows for thread dialogs"), err))
 		}
 
+		// advance cursor to the max group on this page (result row order is not guaranteed)
+		var maxInitiator, maxFlowID int
+		for _, conv := range groupedConversations {
+			if conv.Initiator > maxInitiator || (conv.Initiator == maxInitiator && conv.FlowID > maxFlowID) {
+				maxInitiator = conv.Initiator
+				maxFlowID = conv.FlowID
+			}
+		}
+		lastInitiator, lastFlowID = maxInitiator, maxFlowID
+
+		if err := c.newDB.MigrationStore().SaveCursorProgressInTx(ctx, tx, StepMembers, lastInitiator, lastFlowID); err != nil {
+			tx.Rollback(ctx)
+			return fail(err)
+		}
+
+		if err := tx.Commit(ctx); err != nil {
+			return fail(err)
+		}
+
+		c.log.Debug("members page committed", "lastInitiator", lastInitiator, "lastFlowID", lastFlowID, "conversations", len(groupedConversations))
 		c.addRecordsMigrated(len(threadDialogs))
 
 		if len(groupedConversations) < perPage {
 			break
 		}
-		last := groupedConversations[len(groupedConversations)-1]
-		lastInitiator = last.Initiator
-		lastFlowID = last.FlowID
 	}
-	return tx.Commit(ctx)
+	return nil
 }
 
 func (c *Converter) MigrateMembersSyncMode(ctx context.Context) error {
@@ -96,19 +128,31 @@ func (c *Converter) MigrateMembersSyncMode(ctx context.Context) error {
 		perPage = 1000
 	)
 	c.log.Debug("starting members migration")
-	tx, err := c.newDB.Pool().Begin(ctx)
+
+	lastInitiator, lastFlowID, err := c.newDB.MigrationStore().GetCursorProgress(ctx, SyncStepMembers)
+	if err != nil {
+		return err
+	}
+	if lastInitiator > 0 || lastFlowID > 0 {
+		c.log.Info("resuming members migration", "lastInitiator", lastInitiator, "lastFlowID", lastFlowID)
+	}
+
+	completedAt, err := c.GetStepCompletedAt(ctx, SyncStepMembers)
 	if err != nil {
 		return err
 	}
 
-	completedAt, err := c.GetStepCompletedAtInTx(ctx, tx, SyncStepMembers)
-	if err != nil {
-		tx.Rollback(ctx)
-		return err
+	fail := func(cause error) error {
+		_ = c.newDB.MigrationStore().MarkStepFailed(ctx, SyncStepMembers, 0, cause.Error())
+		return cause
 	}
 
-	var lastInitiator, lastFlowID int
 	for {
+		tx, err := c.newDB.Pool().Begin(ctx)
+		if err != nil {
+			return fail(err)
+		}
+
 		var (
 			threadDialogs  []*modelnew.ThreadDialog
 			threadSettings []*modelnew.DirectSettings
@@ -117,9 +161,10 @@ func (c *Converter) MigrateMembersSyncMode(ctx context.Context) error {
 		groupedConversations, err := c.oldDB.ConversationStore().GetGroupedConversationsByUsersAndFlowFromDate(ctx, lastInitiator, lastFlowID, perPage, completedAt)
 		if err != nil {
 			tx.Rollback(ctx)
-			return err
+			return fail(err)
 		}
 		if len(groupedConversations) == 0 {
+			tx.Rollback(ctx)
 			break
 		}
 
@@ -134,7 +179,7 @@ func (c *Converter) MigrateMembersSyncMode(ctx context.Context) error {
 			})
 			if err != nil {
 				tx.Rollback(ctx)
-				return errors.Join(errors.New("failed to resolve migration row for conversation originators pair "+oldID), err)
+				return fail(errors.Join(errors.New("failed to resolve migration row for conversation originators pair "+oldID), err))
 			}
 			var (
 				dialogs                []*modelnew.ThreadDialog
@@ -153,7 +198,7 @@ func (c *Converter) MigrateMembersSyncMode(ctx context.Context) error {
 					continue
 				}
 				tx.Rollback(ctx)
-				return errors.Join(errors.New("failed to build thread dialogs from conversation"), err)
+				return fail(errors.Join(errors.New("failed to build thread dialogs from conversation"), err))
 			}
 			threadDialogs = append(threadDialogs, dialogs...)
 			migrationRows = append(migrationRows, rows...)
@@ -162,29 +207,46 @@ func (c *Converter) MigrateMembersSyncMode(ctx context.Context) error {
 
 		if err := c.newDB.ThreadDialogStore().InsertThreadDialogs(ctx, tx, threadDialogs); err != nil {
 			tx.Rollback(ctx)
-			return errors.Join(errors.New("failed to insert thread dialogs"), err)
+			return fail(errors.Join(errors.New("failed to insert thread dialogs"), err))
 		}
 
 		if err := c.newDB.DirectSettingsStore().InsertDirectSettings(ctx, tx, threadSettings); err != nil {
 			tx.Rollback(ctx)
-			return errors.Join(errors.New("failed to insert direct settings"), err)
+			return fail(errors.Join(errors.New("failed to insert direct settings"), err))
 		}
 
 		if err := c.newDB.MigrationStore().InsertMigrations(ctx, tx, migrationRows); err != nil {
 			tx.Rollback(ctx)
-			return errors.Join(errors.New("failed to insert migration rows for thread dialogs"), err)
+			return fail(errors.Join(errors.New("failed to insert migration rows for thread dialogs"), err))
 		}
 
+		// advance cursor to the max group on this page (result row order is not guaranteed)
+		var maxInitiator, maxFlowID int
+		for _, conv := range groupedConversations {
+			if conv.Initiator > maxInitiator || (conv.Initiator == maxInitiator && conv.FlowID > maxFlowID) {
+				maxInitiator = conv.Initiator
+				maxFlowID = conv.FlowID
+			}
+		}
+		lastInitiator, lastFlowID = maxInitiator, maxFlowID
+
+		if err := c.newDB.MigrationStore().SaveCursorProgressInTx(ctx, tx, SyncStepMembers, lastInitiator, lastFlowID); err != nil {
+			tx.Rollback(ctx)
+			return fail(err)
+		}
+
+		if err := tx.Commit(ctx); err != nil {
+			return fail(err)
+		}
+
+		c.log.Debug("members page committed", "lastInitiator", lastInitiator, "lastFlowID", lastFlowID, "conversations", len(groupedConversations))
 		c.addRecordsMigrated(len(threadDialogs))
 
 		if len(groupedConversations) < perPage {
 			break
 		}
-		last := groupedConversations[len(groupedConversations)-1]
-		lastInitiator = last.Initiator
-		lastFlowID = last.FlowID
 	}
-	return tx.Commit(ctx)
+	return nil
 }
 
 func (c *Converter) buildThreadDialogsFromConversation(ctx context.Context, tx pgx.Tx, conversation *old.GroupedConversation, newThreadID uuid.UUID) ([]*modelnew.ThreadDialog, []*modelnew.DirectSettings, []*modelnew.MigrationRow, error) {

@@ -19,10 +19,10 @@ func NewBotMappingStore(db *DB) *BotMappingStore {
 // GetAll assumes schema/table are already split and validated by the caller. The
 // identifier is quoted via pgx.Identifier.Sanitize() -- never naive concatenation --
 // since schema/table ultimately come from client-supplied config.
-func (s *BotMappingStore) GetAll(ctx context.Context, tx pgx.Tx, schema, table string) ([]*modelnew.BotMapping, error) {
+func (s *BotMappingStore) GetAll(ctx context.Context, schema, table string) ([]*modelnew.BotMapping, error) {
 	ident := pgx.Identifier{schema, table}.Sanitize()
 	query := fmt.Sprintf("SELECT old_bot_id, new_bot_id FROM %s", ident)
-	rows, err := tx.Query(ctx, query)
+	rows, err := s.db.pool.Query(ctx, query)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read bot mapping table %s.%s: %w", schema, table, err)
 	}
