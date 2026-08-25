@@ -65,7 +65,7 @@ All options are read from environment variables prefixed with `MIGRATION_`.
 | `MIGRATION_OLD_DB_MAX_CONNS` | no | `5` | Connection pool size for the legacy DB |
 | `MIGRATION_NEW_DB_MAX_CONNS` | no | `10` | Connection pool size for the new DB |
 | `MIGRATION_SYNC_MODE` | no | `false` | Run in sync mode instead of full migration mode |
-| `MIGRATION_MIGRATE_PORTAL_CLIENTS` | no | `false` | Include portal clients in the migration (runs `portal_client_to_contact` and `portal_apps_to_accounts` steps) |
+| `MIGRATION_MIGRATE_PORTAL_CLIENTS` | no | `false` | Include portal clients in the migration (runs `portal_client_to_contact` and `portal_apps_to_accounts` steps). When enabled, consider adding an index on the legacy database's `portal.identity` table to speed up the `portal_client_to_contact` step. See "Portal client migration index" below. |
 | `MIGRATION_START_FROM_STEP` | no | _(all)_ | Start from this step, skipping earlier ones |
 | `MIGRATION_SINGLE_STEP` | no | `false` | Run only the step named by `MIGRATION_START_FROM_STEP`, then stop. Requires `MIGRATION_START_FROM_STEP` to be set. Resumes a not-yet-completed step from its last saved progress; fails if the step is already completed (outside sync mode - sync-mode steps remain re-runnable) |
 | `MIGRATION_LOG_LEVEL` | no | `info` | Log verbosity: `debug`, `info`, `warn`, `error` |
@@ -76,6 +76,16 @@ All options are read from environment variables prefixed with `MIGRATION_`.
 DSN format: `postgres://user:password@host:5432/dbname?sslmode=disable`
 
 `MIGRATION_ENCRYPTION_KEY` must be exactly 32 characters (256 bits). Tokens stored in the new database (Facebook page access tokens and WhatsApp Business access tokens) are encrypted with AES-256-GCM using this key.
+
+### Portal client migration index
+
+When `MIGRATION_MIGRATE_PORTAL_CLIENTS` is enabled, the `portal_client_to_contact` step (and its sync-mode counterpart) queries the legacy database's `portal.identity` table. To speed up this step on large deployments, create an index on the old database *before* running the migration:
+
+```sql
+CREATE INDEX IF NOT EXISTS identity_top_updated_at_idx ON portal.identity (top, updated_at DESC);
+```
+
+This index is optional and not created automatically by the tool — if it does not exist, the migration will still complete but may be slower on tables with many portal identities. Run this statement before starting the migration rather than while it is in progress: a plain `CREATE INDEX` takes a lock on `portal.identity` that blocks writes to that table for the duration of the build, and `portal.identity` lives in the legacy *production* database. If you need to build it against a live system, use `CREATE INDEX CONCURRENTLY IF NOT EXISTS ...` instead (it cannot run inside a transaction, and leaves an `INVALID` index behind — safe to `DROP` and retry — if it fails partway through). Once created, the index also speeds up subsequent sync-mode runs of `sync_mode_portal_client_to_contact`.
 
 ### Pre-existing bot mapping
 
