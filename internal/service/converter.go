@@ -14,24 +14,27 @@ import (
 )
 
 const (
-	StepClientsToContacts = "clients_to_contacts"
-	StepBotsToContacts    = "bots_to_contacts"
-	StepConversations     = "conversations"
-	StepMembers           = "members"
-	StepMessages          = "messages"
-	StepGateways          = "gateways"
+	StepClientsToContacts       = "clients_to_contacts"
+	StepPortalClientsToContacts = "portal_client_to_contact"
+	StepPortalAppsToAccounts    = "portal_apps_to_accounts"
+	StepBotsToContacts          = "bots_to_contacts"
+	StepConversations           = "conversations"
+	StepMembers                 = "members"
+	StepMessages                = "messages"
+	StepGateways                = "gateways"
 
 	StepFacebookAndWhatsApp = "facebook_and_whatsapp"
 	StepSyncContactVias     = "sync_contact_vias"
 )
 
 const (
-	SyncStepClientsToContacts = "sync_mode_clients_to_contacts"
-	SyncStepBotsToContacts    = "sync_mode_bots_to_contacts"
-	SyncStepConversations     = "sync_mode_conversations"
-	SyncStepMembers           = "sync_mode_members"
-	SyncStepMessages          = "sync_mode_messages"
-	SyncStepGateways          = "sync_mode_gateways"
+	SyncStepClientsToContacts       = "sync_mode_clients_to_contacts"
+	SyncStepPortalClientsToContacts = "sync_mode_portal_client_to_contact"
+	SyncStepBotsToContacts          = "sync_mode_bots_to_contacts"
+	SyncStepConversations           = "sync_mode_conversations"
+	SyncStepMembers                 = "sync_mode_members"
+	SyncStepMessages                = "sync_mode_messages"
+	SyncStepGateways                = "sync_mode_gateways"
 
 	SyncStepFacebookAndWhatsApp = "sync_mode_facebook_and_whatsapp"
 	SyncStepSyncContactVias     = "sync_mode_sync_contact_vias"
@@ -45,13 +48,16 @@ func NewResolver(db *newdb.DB) *Resolver {
 	return &Resolver{db: db}
 }
 
-func (r *Resolver) ResolveMigrationRow(ctx context.Context, tx pgx.Tx, entityType modelnew.EntityType, oldID string, extraKey string, domainID int) (*modelnew.MigrationRow, error) {
-	return r.db.MigrationStore().GetMigrationRow(ctx, tx, &modelnew.MigrationRowFilters{
-		Type:      []modelnew.EntityType{entityType},
-		OldIDs:    []string{oldID},
-		ExtraKeys: []string{extraKey},
-		DomainID:  domainID,
-	})
+func (r *Resolver) ResolveMigrationRow(ctx context.Context, tx pgx.Tx, entityType modelnew.EntityType, oldID string, extraKey *string, domainID int) (*modelnew.MigrationRow, error) {
+	filters := &modelnew.MigrationRowFilters{
+		Type:     []modelnew.EntityType{entityType},
+		OldIDs:   []string{oldID},
+		DomainID: domainID,
+	}
+	if extraKey != nil {
+		filters.ExtraKeys = []string{*extraKey}
+	}
+	return r.db.MigrationStore().GetMigrationRow(ctx, tx, filters)
 }
 
 func (r *Resolver) ResolveMigrationRows(ctx context.Context, tx pgx.Tx, filters *modelnew.MigrationRowFilters) ([]*modelnew.MigrationRow, error) {
@@ -65,7 +71,10 @@ type Converter struct {
 	resolver  *Resolver
 	encryptor *Encryptor
 
-	isSyncMode bool
+	isSyncMode           bool
+	migratePortalClients bool
+	botMappingTable      string
+	stepRecordsMigrated  int64
 }
 
 type MigrationStep struct {
@@ -73,14 +82,24 @@ type MigrationStep struct {
 	Run  func(ctx context.Context) error
 }
 
-func NewConverter(oldDB *olddb.DB, modelnewDB *newdb.DB, encryptor *Encryptor, isSyncMode bool) *Converter {
+// StepDuration records how long a single migration step took to execute,
+// and how many records were migrated during that step.
+type StepDuration struct {
+	Name            string
+	Duration        time.Duration
+	RecordsMigrated int64
+}
+
+func NewConverter(oldDB *olddb.DB, modelnewDB *newdb.DB, encryptor *Encryptor, isSyncMode bool, migratePortalClients bool, botMappingTable string) *Converter {
 	return &Converter{
-		log:        slog.Default(),
-		oldDB:      oldDB,
-		newDB:      modelnewDB,
-		resolver:   NewResolver(modelnewDB),
-		encryptor:  encryptor,
-		isSyncMode: isSyncMode,
+		log:                  slog.Default(),
+		oldDB:                oldDB,
+		newDB:                modelnewDB,
+		resolver:             NewResolver(modelnewDB),
+		encryptor:            encryptor,
+		isSyncMode:           isSyncMode,
+		migratePortalClients: migratePortalClients,
+		botMappingTable:      botMappingTable,
 	}
 }
 
@@ -130,13 +149,18 @@ func (c *Converter) runSingleStep(ctx context.Context, stepName string) error {
 	}
 
 	c.log.Info("migration step started", "step", step.Name)
+	c.resetStepRecordsMigrated()
+	stepStart := time.Now()
 	if err := step.Run(ctx); err != nil {
 		return err
 	}
+	duration := time.Since(stepStart)
+	recordsMigrated := c.stepRecordsMigrated
 	if err := c.newDB.MigrationStore().MarkStepCompleted(ctx, step.Name); err != nil {
 		return err
 	}
 	c.log.Info("migration step completed", "step", step.Name)
+	c.logStepDurations([]StepDuration{{Name: step.Name, Duration: duration, RecordsMigrated: recordsMigrated}})
 	return nil
 }
 
@@ -164,9 +188,11 @@ func (c *Converter) runStepsFrom(ctx context.Context, startFrom string) error {
 
 	var (
 		firstStepIndex int
+		found          bool
 	)
 	for i, step := range steps {
 		if step.Name == startFrom {
+			found = true
 			if _, alreadyCompleted := completed[step.Name]; alreadyCompleted {
 				if i > 0 {
 					for s, nextUncompletedStep := range steps[i-1:] {
@@ -183,6 +209,11 @@ func (c *Converter) runStepsFrom(ctx context.Context, startFrom string) error {
 		}
 	}
 
+	if !found {
+		return fmt.Errorf("unknown migration step: %s", startFrom)
+	}
+
+	durations := make([]StepDuration, 0, len(steps)-firstStepIndex)
 	for _, step := range steps[firstStepIndex:] {
 		if _, ok := completed[step.Name]; ok {
 			c.log.Info("migration step already completed, skipping", "step", step.Name)
@@ -190,15 +221,21 @@ func (c *Converter) runStepsFrom(ctx context.Context, startFrom string) error {
 		}
 
 		c.log.Info("migration step started", "step", step.Name)
+		c.resetStepRecordsMigrated()
+		stepStart := time.Now()
 		if err := step.Run(ctx); err != nil {
+			c.logStepDurations(durations)
 			return err
 		}
+		durations = append(durations, StepDuration{Name: step.Name, Duration: time.Since(stepStart), RecordsMigrated: c.stepRecordsMigrated})
 
 		if err := c.newDB.MigrationStore().MarkStepCompleted(ctx, step.Name); err != nil {
+			c.logStepDurations(durations)
 			return err
 		}
 		c.log.Info("migration step completed", "step", step.Name)
 	}
+	c.logStepDurations(durations)
 	return nil
 }
 
@@ -221,6 +258,7 @@ func (c *Converter) runSteps(ctx context.Context) error {
 		}
 	}
 
+	durations := make([]StepDuration, 0, len(steps))
 	for _, step := range steps {
 		if _, ok := completed[step.Name]; ok {
 			c.log.Info("migration step already completed, skipping", "step", step.Name)
@@ -228,50 +266,99 @@ func (c *Converter) runSteps(ctx context.Context) error {
 		}
 
 		c.log.Info("migration step started", "step", step.Name)
+		c.resetStepRecordsMigrated()
+		stepStart := time.Now()
 		if err := step.Run(ctx); err != nil {
+			c.logStepDurations(durations)
 			return err
 		}
+		durations = append(durations, StepDuration{Name: step.Name, Duration: time.Since(stepStart), RecordsMigrated: c.stepRecordsMigrated})
 
 		if err := c.newDB.MigrationStore().MarkStepCompleted(ctx, step.Name); err != nil {
+			c.logStepDurations(durations)
 			return err
 		}
 		c.log.Info("migration step completed", "step", step.Name)
 	}
+	c.logStepDurations(durations)
 	return nil
 }
 
+func (c *Converter) resetStepRecordsMigrated() {
+	c.stepRecordsMigrated = 0
+}
+
+func (c *Converter) addRecordsMigrated(n int) {
+	c.stepRecordsMigrated += int64(n)
+}
+
+// logStepDurations emits a summary report of how long each executed
+// migration step took, how many records were migrated, plus the total
+// elapsed time and record count across all of them.
+// It is a no-op when durations is empty (e.g. every step in the run was
+// already completed and skipped).
+func (c *Converter) logStepDurations(durations []StepDuration) {
+	if len(durations) == 0 {
+		return
+	}
+	var (
+		total        time.Duration
+		totalRecords int64
+	)
+	for _, d := range durations {
+		total += d.Duration
+		totalRecords += d.RecordsMigrated
+		c.log.Info("migration step duration", "step", d.Name, "duration", d.Duration.String(), "records_migrated", d.RecordsMigrated)
+	}
+	c.log.Info("migration duration summary", "steps", len(durations), "total_duration", total.String(), "total_records_migrated", totalRecords)
+}
+
 func (c *Converter) getMigrationSteps() []MigrationStep {
-	return []MigrationStep{
+	steps := []MigrationStep{
 		{Name: StepClientsToContacts, Run: c.MigrateClientsToContacts},
+	}
+	if c.migratePortalClients {
+		steps = append(steps, MigrationStep{Name: StepPortalClientsToContacts, Run: c.MigratePortalClientsToContacts})
+		steps = append(steps, MigrationStep{Name: StepPortalAppsToAccounts, Run: c.MigratePortalAppsToAccounts})
+	}
+	steps = append(steps, []MigrationStep{
 		{Name: StepBotsToContacts, Run: c.MigrateBotsToContacts},
 		{Name: StepConversations, Run: c.MigrateConversations},
 		{Name: StepMembers, Run: c.MigrateMembers},
 		{Name: StepMessages, Run: c.MigrateMessages},
 		{Name: StepFacebookAndWhatsApp, Run: c.MigrateFacebookProviders},
 		{Name: StepSyncContactVias, Run: c.SyncContactsVias},
-	}
+	}...)
+	return steps
 }
 func (c *Converter) getSyncModeMigrationSteps() []MigrationStep {
-	return []MigrationStep{
+	steps := []MigrationStep{
 		{Name: SyncStepClientsToContacts, Run: c.MigrateClientsToContactsSyncMode},
+	}
+	if c.migratePortalClients {
+		steps = append(steps, MigrationStep{Name: SyncStepPortalClientsToContacts, Run: c.MigratePortalClientsToContactsSyncMode})
+	}
+	steps = append(steps, []MigrationStep{
 		{Name: SyncStepBotsToContacts, Run: c.MigrateBotsToContactsSyncMode},
 		{Name: SyncStepConversations, Run: c.MigrateConversationsSyncMode},
 		{Name: SyncStepMembers, Run: c.MigrateMembersSyncMode},
 		{Name: SyncStepMessages, Run: c.MigrateMessagesSyncMode},
 		{Name: SyncStepFacebookAndWhatsApp, Run: c.MigrateFacebookProvidersSyncMode},
 		{Name: SyncStepSyncContactVias, Run: c.SyncContactsVias},
-	}
+	}...)
+	return steps
 }
 
 var stepNameMap = map[string]string{
-	SyncStepMembers:             StepMembers,
-	SyncStepConversations:       StepConversations,
-	SyncStepBotsToContacts:      StepBotsToContacts,
-	SyncStepClientsToContacts:   StepClientsToContacts,
-	SyncStepFacebookAndWhatsApp: StepFacebookAndWhatsApp,
-	SyncStepMessages:            StepMessages,
-	SyncStepSyncContactVias:     StepSyncContactVias,
-	SyncStepGateways:            StepGateways,
+	SyncStepMembers:                 StepMembers,
+	SyncStepConversations:           StepConversations,
+	SyncStepBotsToContacts:          StepBotsToContacts,
+	SyncStepClientsToContacts:       StepClientsToContacts,
+	SyncStepPortalClientsToContacts: StepPortalClientsToContacts,
+	SyncStepFacebookAndWhatsApp:     StepFacebookAndWhatsApp,
+	SyncStepMessages:                StepMessages,
+	SyncStepSyncContactVias:         StepSyncContactVias,
+	SyncStepGateways:                StepGateways,
 }
 
 func (c *Converter) GetStepCompletedAtInTx(ctx context.Context, tx pgx.Tx, step string) (time.Time, error) {

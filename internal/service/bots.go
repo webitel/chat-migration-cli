@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"fmt"
 	"strconv"
 	"strings"
 
@@ -11,6 +12,35 @@ import (
 )
 
 const BotIssuerID = "schema"
+
+// loadBotMapping returns a nil map, no error, when c.botMappingTable is unset -- the
+// mapped-bot lookup downstream then always misses, so the feature is a no-op. Mapped
+// new_bot_id values are trusted as-is, never validated against existing contacts. The
+// schema.table split is already validated at config load (main.go's mustLoadConfig);
+// repeating it here is defensive, not load-bearing.
+func (c *Converter) loadBotMapping(ctx context.Context) (map[string]uuid.UUID, error) {
+	if c.botMappingTable == "" {
+		return nil, nil
+	}
+	schema, table, ok := strings.Cut(c.botMappingTable, ".")
+	if !ok || schema == "" || table == "" {
+		return nil, fmt.Errorf("invalid MIGRATION_BOT_MAPPING_TABLE %q: expected \"schema.table\"", c.botMappingTable)
+	}
+	rows, err := c.newDB.BotMappingStore().GetAll(ctx, schema, table)
+	if err != nil {
+		return nil, err
+	}
+	mapping := make(map[string]uuid.UUID, len(rows))
+	for _, r := range rows {
+		oldID := strconv.Itoa(r.OldBotID)
+		if _, exists := mapping[oldID]; exists {
+			c.log.Warn("duplicate old_bot_id in bot mapping table, last row wins",
+				"old_bot_id", r.OldBotID, "table", c.botMappingTable)
+		}
+		mapping[oldID] = r.NewBotID
+	}
+	return mapping, nil
+}
 
 // NOTE: MigrationRow old_id = flow_id, new_id = contact_id
 func (c *Converter) MigrateBotsToContacts(ctx context.Context) error {
@@ -31,6 +61,10 @@ func (c *Converter) MigrateBotsToContacts(ctx context.Context) error {
 		return cause
 	}
 
+	botMapping, err := c.loadBotMapping(ctx)
+	if err != nil {
+		return err
+	}
 	err = PagerFunc(ctx, perPage, func(ctx context.Context, offset, limit int) (bool, error) {
 		absOffset := offset + startOffset
 
@@ -54,6 +88,17 @@ func (c *Converter) MigrateBotsToContacts(ctx context.Context) error {
 			migrationRows []*modelnew.MigrationRow
 		)
 		for _, bot := range bots {
+			oldID := strconv.Itoa(bot.FlowID)
+			if newBotID, mapped := botMapping[oldID]; mapped {
+				migrationRows = append(migrationRows, &modelnew.MigrationRow{
+					ID:         uuid.New(),
+					EntityType: modelnew.EntityTypeBotContact,
+					OldID:      oldID,
+					NewID:      newBotID,
+					DomainID:   bot.DC,
+				})
+				continue
+			}
 			converted, migrationRow := convertBotToContact(bot)
 			contacts = append(contacts, converted)
 			migrationRows = append(migrationRows, migrationRow)
@@ -77,6 +122,7 @@ func (c *Converter) MigrateBotsToContacts(ctx context.Context) error {
 		}
 		lastCommittedOffset = absOffset + limit
 
+		c.addRecordsMigrated(len(contacts))
 		return iterate, nil
 	})
 	if err != nil {
@@ -93,13 +139,16 @@ func (c *Converter) MigrateBotsToContactsSyncMode(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if startOffset > 0 {
-		c.log.Info("resuming bots-to-contacts migration", "startOffset", startOffset)
+	botMapping, err := c.loadBotMapping(ctx)
+	if err != nil {
+		return err
 	}
-
 	completedAt, err := c.GetStepCompletedAt(ctx, SyncStepBotsToContacts)
 	if err != nil {
 		return err
+	}
+	if startOffset > 0 {
+		c.log.Info("resuming bots-to-contacts migration", "startOffset", startOffset)
 	}
 
 	lastCommittedOffset := startOffset
@@ -131,11 +180,23 @@ func (c *Converter) MigrateBotsToContactsSyncMode(ctx context.Context) error {
 			migrationRows []*modelnew.MigrationRow
 		)
 		for _, bot := range bots {
+			oldID := strconv.Itoa(bot.FlowID)
+			if newBotID, mapped := botMapping[oldID]; mapped {
+				migrationRows = append(migrationRows, &modelnew.MigrationRow{
+					ID:         uuid.New(),
+					EntityType: modelnew.EntityTypeBotContact,
+					OldID:      oldID,
+					NewID:      newBotID,
+					DomainID:   bot.DC,
+				})
+				continue
+			}
 			converted, migrationRow := convertBotToContact(bot)
 			contacts = append(contacts, converted)
 			migrationRows = append(migrationRows, migrationRow)
 		}
-		if err := c.newDB.ContactStore().InsertContactsIgnoreConflicts(ctx, tx, contacts); err != nil {
+		rowsAffected, err := c.newDB.ContactStore().InsertContactsIgnoreConflicts(ctx, tx, contacts)
+		if err != nil {
 			tx.Rollback(ctx)
 			return false, err
 		}
@@ -155,6 +216,7 @@ func (c *Converter) MigrateBotsToContactsSyncMode(ctx context.Context) error {
 		}
 		lastCommittedOffset = absOffset + limit
 
+		c.addRecordsMigrated(int(rowsAffected))
 		return iterate, nil
 	})
 	if err != nil {

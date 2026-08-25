@@ -92,11 +92,12 @@ func (c *Converter) MigrateClientsToContacts(ctx context.Context) error {
 			return fail(err)
 		}
 
+		c.addRecordsMigrated(len(contacts))
+
 		if len(clients) < perPage {
 			break
 		}
 	}
-
 	return nil
 }
 
@@ -165,7 +166,8 @@ func (c *Converter) MigrateClientsToContactsSyncMode(ctx context.Context) error 
 
 			}
 		}
-		if err := c.newDB.ContactStore().InsertContactsIgnoreConflicts(ctx, tx, contacts); err != nil {
+		rowsAffected, err := c.newDB.ContactStore().InsertContactsIgnoreConflicts(ctx, tx, contacts)
+		if err != nil {
 			tx.Rollback(ctx)
 			return fail(err)
 		}
@@ -186,12 +188,123 @@ func (c *Converter) MigrateClientsToContactsSyncMode(ctx context.Context) error 
 			return fail(err)
 		}
 
+		c.addRecordsMigrated(int(rowsAffected))
+
 		if len(clients) < perPage {
 			break
 		}
 	}
-
 	return nil
+}
+
+func (c *Converter) MigratePortalClientsToContacts(ctx context.Context) error {
+	var (
+		perPage = 1000
+	)
+	c.log.Debug("starting portal-clients-to-contacts migration")
+	tx, err := c.newDB.Pool().Begin(ctx)
+	if err != nil {
+		return err
+	}
+	err = PagerFunc(ctx, perPage, func(ctx context.Context, offset, limit int) (bool, error) {
+		iterate := true
+		clients, err := c.oldDB.ClientStore().GetPortalClients(ctx, offset, limit)
+		if err != nil {
+			return false, err
+		}
+		if len(clients) < limit {
+			iterate = false
+		}
+		c.log.Debug("portal clients page fetched", "offset", offset, "count", len(clients))
+		var (
+			contacts      []*modelnew.Contact
+			migrationRows []*modelnew.MigrationRow
+		)
+		for _, client := range clients {
+			contact := convertPortalClientToContact(client)
+			contacts = append(contacts, contact)
+			migrationRows = append(migrationRows, &modelnew.MigrationRow{
+				ID:         uuid.New(),
+				EntityType: modelnew.EntityTypeClientContact,
+				OldID:      strconv.Itoa(client.ID),
+				NewID:      contact.ID,
+				DomainID:   contact.DomainID,
+			})
+		}
+		if err := c.newDB.ContactStore().InsertContacts(ctx, tx, contacts); err != nil {
+			return false, err
+		}
+		if err := c.newDB.MigrationStore().InsertMigrations(ctx, tx, migrationRows); err != nil {
+			return false, err
+		}
+		c.addRecordsMigrated(len(contacts))
+		return iterate, nil
+	})
+	if err != nil {
+		tx.Rollback(ctx)
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+func (c *Converter) MigratePortalClientsToContactsSyncMode(ctx context.Context) error {
+	var (
+		perPage = 1000
+	)
+	c.log.Debug("starting portal-clients-to-contacts migration")
+	tx, err := c.newDB.Pool().Begin(ctx)
+	if err != nil {
+		return err
+	}
+
+	completedAt, err := c.GetStepCompletedAtInTx(ctx, tx, SyncStepPortalClientsToContacts)
+	if err != nil {
+		tx.Rollback(ctx)
+		return err
+	}
+
+	err = PagerFunc(ctx, perPage, func(ctx context.Context, offset, limit int) (bool, error) {
+		iterate := true
+		clients, err := c.oldDB.ClientStore().GetPortalClientsFromDate(ctx, offset, limit, &completedAt)
+		if err != nil {
+			return false, err
+		}
+		if len(clients) < limit {
+			iterate = false
+		}
+		c.log.Debug("portal clients page fetched", "offset", offset, "count", len(clients))
+		var (
+			contacts      []*modelnew.Contact
+			migrationRows []*modelnew.MigrationRow
+		)
+		for _, client := range clients {
+			contact := convertPortalClientToContact(client)
+			contacts = append(contacts, contact)
+			migrationRows = append(migrationRows, &modelnew.MigrationRow{
+				ID:         uuid.New(),
+				EntityType: modelnew.EntityTypeClientContact,
+				OldID:      strconv.Itoa(int(client.ID)),
+				NewID:      contact.ID,
+				DomainID:   contact.DomainID,
+			})
+
+		}
+		rowsAffected, err := c.newDB.ContactStore().InsertContactsIgnoreConflicts(ctx, tx, contacts)
+		if err != nil {
+			return false, err
+		}
+		if err := c.newDB.MigrationStore().InsertMigrations(ctx, tx, migrationRows); err != nil {
+			return false, err
+		}
+		c.addRecordsMigrated(int(rowsAffected))
+		return iterate, nil
+	})
+	if err != nil {
+		tx.Rollback(ctx)
+		return err
+	}
+
+	return tx.Commit(ctx)
 }
 
 func convertClientToContact(client *old.Client) []*modelnew.Contact {
@@ -213,6 +326,27 @@ func convertClientToContact(client *old.Client) []*modelnew.Contact {
 		})
 	}
 	return contacts
+}
+
+func convertPortalClientToContact(client *old.PortalClient) *modelnew.Contact {
+	updatedAt := client.CreatedAt
+	if client.UpdatedAt != nil {
+		updatedAt = *client.UpdatedAt
+	}
+	return &modelnew.Contact{
+		BaseModel: modelnew.BaseModel{
+			ID:        uuid.New(),
+			DomainID:  client.DomainID,
+			CreatedAt: client.CreatedAt,
+			UpdatedAt: updatedAt,
+		},
+		IssuerID:  client.Iss,
+		SubjectID: client.Sub,
+		Type:      client.Type,
+		Name:      client.Name,
+		Username:  buildUsername(client.Name, client.Type, client.ProfileID.String()),
+		IsBot:     false,
+	}
 }
 
 func buildUsernameForClient(cli *old.Client) string {

@@ -16,6 +16,7 @@ const (
 	EntityTypeGatewayToContact             EntityType = "gateway_to_contact"
 	EntityTypeProviderToGateway            EntityType = "provider_to_gateway"
 	EntityTypeProviderToMetaApp            EntityType = "provider_to_meta_app"
+	EntityTypePortalAppAccount             EntityType = "portal_app_account"
 )
 
 type MigrationRowFilters struct {

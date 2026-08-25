@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -17,16 +18,18 @@ import (
 // config holds all runtime configuration loaded from environment variables.
 // All variables are prefixed with MIGRATION_ (e.g. MIGRATION_OLD_DB_DSN).
 type config struct {
-	OldDBDSN      string     // required: postgres DSN for the legacy chat DB
-	NewDBDSN      string     // required: postgres DSN for the new microservices DB
-	OldDBConns    int32      // OLD_DB_MAX_CONNS (default 5)
-	NewDBConns    int32      // NEW_DB_MAX_CONNS (default 10)
-	StartFrom     string     // START_FROM_STEP: skip steps before this one (optional)
-	SingleStep    bool       // SINGLE_STEP: run only the step named by StartFrom, then stop (optional)
-	LogLevel      slog.Level // LOG_LEVEL: debug|info|warn|error (default info)
-	LogJSON       bool       // LOG_JSON: emit JSON instead of text (default false)
-	EncryptionKey string     // required: 32-byte AES-256 key for encrypting tokens
-	Sync          bool       // SYNC mode
+	OldDBDSN             string     // required: postgres DSN for the legacy chat DB
+	NewDBDSN             string     // required: postgres DSN for the new microservices DB
+	OldDBConns           int32      // OLD_DB_MAX_CONNS (default 5)
+	NewDBConns           int32      // NEW_DB_MAX_CONNS (default 10)
+	StartFrom            string     // START_FROM_STEP: skip steps before this one (optional)
+	SingleStep           bool       // SINGLE_STEP: run only the step named by StartFrom, then stop (optional)
+	LogLevel             slog.Level // LOG_LEVEL: debug|info|warn|error (default info)
+	LogJSON              bool       // LOG_JSON: emit JSON instead of text (default false)
+	EncryptionKey        string     // required: 32-byte AES-256 key for encrypting tokens
+	Sync                 bool       // SYNC_MODE
+	MigratePortalClients bool       // MIGRATE_PORTAL_CLIENTS
+	BotMappingTable      string     // BOT_MAPPING_TABLE: schema.table; optional, empty disables pre-existing bot mapping
 }
 
 func main() {
@@ -54,8 +57,13 @@ func main() {
 	}
 	defer newPool.Close()
 
-	srcDB := olddb.New(oldPool)
-	dstDB, err := newdb.New(newPool)
+	srcDB, err := olddb.New(oldPool, cfg.MigratePortalClients)
+	if err != nil {
+		log.Error("source DB init failed", "error", err)
+		os.Exit(1)
+	}
+
+	dstDB, err := newdb.New(newPool, cfg.MigratePortalClients)
 	if err != nil {
 		log.Error("destination DB init failed", "error", err)
 		os.Exit(1)
@@ -67,7 +75,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	converter := service.NewConverter(srcDB, dstDB, encryptor, cfg.Sync)
+	converter := service.NewConverter(srcDB, dstDB, encryptor, cfg.Sync, cfg.MigratePortalClients, cfg.BotMappingTable)
 
 	var runErr error
 	switch {
@@ -101,6 +109,8 @@ func mustLoadConfig() config {
 	v.SetDefault("START_FROM_STEP", "")
 	v.SetDefault("SINGLE_STEP", false)
 	v.SetDefault("SYNC_MODE", false)
+	v.SetDefault("MIGRATE_PORTAL_CLIENTS", false)
+	v.SetDefault("BOT_MAPPING_TABLE", "")
 
 	oldDSN := v.GetString("OLD_DB_DSN")
 	newDSN := v.GetString("NEW_DB_DSN")
@@ -129,17 +139,27 @@ func mustLoadConfig() config {
 		level = slog.LevelInfo
 	}
 
+	botMappingTable := v.GetString("BOT_MAPPING_TABLE")
+	if botMappingTable != "" {
+		schema, table, ok := strings.Cut(botMappingTable, ".")
+		if !ok || strings.TrimSpace(schema) == "" || strings.TrimSpace(table) == "" {
+			slog.Error("MIGRATION_BOT_MAPPING_TABLE must be in \"schema.table\" format", "value", botMappingTable)
+			os.Exit(1)
+		}
+	}
 	return config{
-		OldDBDSN:      oldDSN,
-		NewDBDSN:      newDSN,
-		OldDBConns:    int32(v.GetInt("OLD_DB_MAX_CONNS")),
-		NewDBConns:    int32(v.GetInt("NEW_DB_MAX_CONNS")),
-		StartFrom:     startFrom,
-		SingleStep:    singleStep,
-		LogLevel:      level,
-		LogJSON:       v.GetBool("LOG_JSON"),
-		EncryptionKey: encryptionKey,
-		Sync:          v.GetBool("SYNC_MODE"),
+		OldDBDSN:             oldDSN,
+		NewDBDSN:             newDSN,
+		OldDBConns:           int32(v.GetInt("OLD_DB_MAX_CONNS")),
+		NewDBConns:           int32(v.GetInt("NEW_DB_MAX_CONNS")),
+		StartFrom:            startFrom,
+		SingleStep:           singleStep,
+		LogLevel:             level,
+		LogJSON:              v.GetBool("LOG_JSON"),
+		EncryptionKey:        encryptionKey,
+		Sync:                 v.GetBool("SYNC_MODE"),
+		MigratePortalClients: v.GetBool("MIGRATE_PORTAL_CLIENTS"),
+		BotMappingTable:      botMappingTable,
 	}
 }
 

@@ -18,11 +18,13 @@ type DB struct {
 	messageStore        *MessageStore
 	providerStore       *ProviderStore
 	directSettingsStore *DirectSettingsStore
+	appStore            *AppStore
+	botMappingStore     *BotMappingStore
 }
 
-func New(pool *pgxpool.Pool) (*DB, error) {
+func New(pool *pgxpool.Pool, migratePortals bool) (*DB, error) {
 	db := &DB{pool: pool}
-	if err := db.initializeMigrationTable(context.Background()); err != nil {
+	if err := db.initializeMigrationTable(context.Background(), migratePortals); err != nil {
 		return nil, errors.Join(errors.New("failed to init migration table"), err)
 	}
 	return db, nil
@@ -67,7 +69,7 @@ func (db *DB) MessageStore() *MessageStore {
 	return db.messageStore
 }
 
-func (db *DB) initializeMigrationTable(ctx context.Context) error {
+func (db *DB) initializeMigrationTable(ctx context.Context, migratePortals bool) error {
 	_, err := db.pool.Exec(ctx, `CREATE TABLE IF NOT EXISTS public.chat_migration(
 	id UUID PRIMARY KEY NOT NULL DEFAULT gen_random_uuid(),
 	entity_type TEXT NOT NULL,
@@ -93,6 +95,11 @@ func (db *DB) initializeMigrationTable(ctx context.Context) error {
 	ALTER TABLE public.chat_migration_step ADD COLUMN IF NOT EXISTS error TEXT;
 	ALTER TABLE public.chat_migration_step ADD COLUMN IF NOT EXISTS completed_at TIMESTAMP WITH TIME ZONE;
 	`)
+	if err != nil {
+		return err
+	}
+
+
 	return err
 }
 
@@ -108,4 +115,18 @@ func (db *DB) ProviderStore() *ProviderStore {
 		db.providerStore = NewProviderStore(db)
 	}
 	return db.providerStore
+}
+
+func (db *DB) AppStore() *AppStore {
+	if db.appStore == nil {
+		db.appStore = NewAppStore(db)
+	}
+	return db.appStore
+}
+
+func (db *DB) BotMappingStore() *BotMappingStore {
+	if db.botMappingStore == nil {
+		db.botMappingStore = NewBotMappingStore(db)
+	}
+	return db.botMappingStore
 }

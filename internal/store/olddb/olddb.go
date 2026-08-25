@@ -1,22 +1,46 @@
 package olddb
 
-import "github.com/jackc/pgx/v5/pgxpool"
+import (
+	"context"
+
+	"github.com/jackc/pgx/v5/pgxpool"
+)
 
 // DB is a connection to the legacy monolithic chat service database.
 type DB struct {
 	pool *pgxpool.Pool
 
+	appStore          *AppStore
 	botStore          *BotStore
 	clientStore       *ClientStore
 	conversationStore *ConversationStore
 	messageStore      *MessageStore
 }
 
-func New(pool *pgxpool.Pool) *DB { return &DB{pool: pool} }
+func New(pool *pgxpool.Pool, migratePortalClients bool) (*DB, error) {
+	db := &DB{pool: pool}
+
+	if migratePortalClients {
+		_, err := db.pool.Exec(context.Background(), `CREATE INDEX IF NOT EXISTS identity_top_updated_at_idx
+    ON portal.identity (top, updated_at DESC);`)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	return db, nil
+}
 
 func (db *DB) Pool() *pgxpool.Pool { return db.pool }
 
 func (db *DB) Close() { db.pool.Close() }
+
+func (db *DB) AppStore() *AppStore {
+	if db.appStore == nil {
+		db.appStore = NewAppStore(db)
+	}
+	return db.appStore
+}
 
 func (db *DB) BotStore() *BotStore {
 	if db.botStore == nil {

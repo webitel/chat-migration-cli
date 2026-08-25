@@ -146,6 +146,7 @@ func (c *Converter) MigrateFacebookProviders(ctx context.Context) error {
 		lastCommittedOffset = absOffset + limit
 
 		c.log.Debug("providers page committed", "offset", absOffset, "count", len(providers))
+		c.addRecordsMigrated(len(gates))
 		return iterate, nil
 	})
 
@@ -290,6 +291,7 @@ func (c *Converter) MigrateFacebookProvidersSyncMode(ctx context.Context) error 
 		lastCommittedOffset = absOffset + limit
 
 		c.log.Debug("providers page committed", "offset", absOffset, "count", len(providers))
+		c.addRecordsMigrated(len(gates))
 		return iterate, nil
 	})
 

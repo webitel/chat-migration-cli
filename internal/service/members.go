@@ -63,7 +63,7 @@ func (c *Converter) MigrateMembers(ctx context.Context) error {
 				)
 				continue
 			}
-			thread, err := c.resolver.ResolveMigrationRow(ctx, tx, modelnew.EntityTypeConversationThread, groupedConv.ConvIDs[0].String(), "", groupedConv.DomainID)
+			thread, err := c.resolver.ResolveMigrationRow(ctx, tx, modelnew.EntityTypeConversationThread, groupedConv.ConvIDs[0].String(), nil, groupedConv.DomainID)
 			if err != nil {
 				tx.Rollback(ctx)
 				return fail(errors.Join(errors.New("failed to resolve migration row for conversation thread "+groupedConv.ConvIDs[0].String()), err))
@@ -114,6 +114,7 @@ func (c *Converter) MigrateMembers(ctx context.Context) error {
 		}
 
 		c.log.Debug("members page committed", "lastInitiator", lastInitiator, "lastFlowID", lastFlowID, "conversations", len(groupedConversations))
+		c.addRecordsMigrated(len(threadDialogs))
 
 		if len(groupedConversations) < perPage {
 			break
@@ -239,6 +240,7 @@ func (c *Converter) MigrateMembersSyncMode(ctx context.Context) error {
 		}
 
 		c.log.Debug("members page committed", "lastInitiator", lastInitiator, "lastFlowID", lastFlowID, "conversations", len(groupedConversations))
+		c.addRecordsMigrated(len(threadDialogs))
 
 		if len(groupedConversations) < perPage {
 			break
@@ -277,15 +279,15 @@ func (c *Converter) buildThreadDialogsFromConversation(ctx context.Context, tx p
 var errInitiatorNotFound = errors.New("initiator not found")
 
 func (c *Converter) buildOwnerThreadDialogFromConversation(ctx context.Context, tx pgx.Tx, conversation *old.GroupedConversation, newThreadID uuid.UUID) ([]*modelnew.ThreadDialog, []*modelnew.DirectSettings, []*modelnew.MigrationRow, error) {
-	initiatorContact, err := c.resolver.ResolveMigrationRow(ctx, tx, modelnew.EntityTypeClientContact, strconv.Itoa(conversation.Initiator), "", conversation.DomainID)
+	initiatorContact, err := c.resolver.ResolveMigrationRow(ctx, tx, modelnew.EntityTypeClientContact, strconv.Itoa(conversation.Initiator), nil, conversation.DomainID)
 	if err != nil {
-		c.log.Error("failed to resolve initiator contact", slog.String("error", err.Error()), slog.Int("initiator", conversation.Initiator), slog.Int("domain_id", conversation.DomainID))
+		c.log.Error("failed to resolve initiator contact, probably client has been deleted", slog.String("error", err.Error()), slog.Int("initiator", conversation.Initiator), slog.Int("domain_id", conversation.DomainID))
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil, nil, errInitiatorNotFound
 		}
 		return nil, nil, nil, err
 	}
-	botContact, err := c.resolver.ResolveMigrationRow(ctx, tx, modelnew.EntityTypeBotContact, strconv.Itoa(conversation.FlowID), "", conversation.DomainID)
+	botContact, err := c.resolver.ResolveMigrationRow(ctx, tx, modelnew.EntityTypeBotContact, strconv.Itoa(conversation.FlowID), nil, conversation.DomainID)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			botContact, err = c.restoreBotFromConversation(ctx, conversation, tx)
@@ -382,7 +384,7 @@ func (c *Converter) restoreBotFromConversation(ctx context.Context, conversation
 			Username:  fmt.Sprintf("flow_%d_bot", conversation.FlowID),
 			IsBot:     true,
 		}
-		err := c.newDB.ContactStore().InsertContactsIgnoreConflicts(ctx, tx, []*modelnew.Contact{bot})
+		_, err := c.newDB.ContactStore().InsertContactsIgnoreConflicts(ctx, tx, []*modelnew.Contact{bot})
 		if err != nil {
 			return nil, err
 		}
@@ -498,7 +500,7 @@ func (c *Converter) restoreWebitelUser(ctx context.Context, tx pgx.Tx, user *old
 		Username:  buildUsername(name, "webitel", strconv.Itoa(user.UserID)),
 		IsBot:     false,
 	}
-	err := c.newDB.ContactStore().InsertContactsIgnoreConflicts(ctx, tx, []*modelnew.Contact{newContact})
+	_, err := c.newDB.ContactStore().InsertContactsIgnoreConflicts(ctx, tx, []*modelnew.Contact{newContact})
 	if err != nil {
 		return nil, err
 	}

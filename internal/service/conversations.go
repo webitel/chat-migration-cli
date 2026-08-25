@@ -103,6 +103,7 @@ func (c *Converter) MigrateConversations(ctx context.Context) error {
 		}
 
 		c.log.Debug("conversations page committed", "lastInitiator", lastInitiator, "lastFlowID", lastFlowID, "conversations", len(groupedConversations))
+		c.addRecordsMigrated(len(threads))
 
 		if len(groupedConversations) < perPage {
 			break
@@ -293,6 +294,7 @@ func (c *Converter) MigrateConversationsSyncMode(ctx context.Context) error {
 		}
 
 		c.log.Debug("conversations page committed", "lastInitiator", lastInitiator, "lastFlowID", lastFlowID, "conversations", originalCount)
+		c.addRecordsMigrated(len(threads))
 
 		if originalCount < perPage {
 			break
