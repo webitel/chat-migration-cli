@@ -1,0 +1,61 @@
+name: PR (chat-migration-cli)
+run-name: "chat-migration-cli@pr${{ github.event.pull_request.number }}#${{ github.run_number }} - ${{ github.event.pull_request.title }}"
+
+on:
+  pull_request:
+
+permissions: { contents: read }
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  prepare:
+    name: Prepare
+    uses: webitel/reusable-workflows/.github/workflows/golang-prepare.yml@v2
+    permissions:
+      contents: read
+      pull-requests: read
+      id-token: write
+
+    with:
+      versioning: semver
+      development-branch: ${{ github.event.repository.default_branch }}
+      triggered-branch: ${{ github.event.pull_request.base.ref }}
+
+  checks:
+    name: Checks
+    needs: [ prepare ]
+    uses: webitel/reusable-workflows/.github/workflows/golang-checks.yml@v2
+    permissions:
+      contents: read
+      actions: read
+      security-events: write
+
+    with:
+      changes: ${{ needs.prepare.outputs.changes }}
+
+  compile:
+    name: Build
+    needs: [ prepare ]
+    uses: webitel/reusable-workflows/.github/workflows/golang-build.yml@v2
+    with:
+      binary-name: chat-migration-cli
+      ldflags: >
+        -s -w
+        -X github.com/webitel/chat-migration-cli/internal/buildinfo.Version=${{ needs.prepare.outputs.full-version }}
+        -X github.com/webitel/chat-migration-cli/internal/buildinfo.BuildNumber=${{ needs.prepare.outputs.version-build }}
+        -X github.com/webitel/chat-migration-cli/internal/buildinfo.GitCommit=${{ github.sha }}
+        -X github.com/webitel/chat-migration-cli/internal/buildinfo.BuildTime=${{ needs.prepare.outputs.build-timestamp }}
+        
+
+      version: ${{ needs.prepare.outputs.version }}
+      version-build: ${{ needs.prepare.outputs.version-build }}
+      prerelease: ${{ needs.prepare.outputs.prerelease }}
+      package-name: chat-migration-cli
+      package-description: ${{ github.event.repository.description }}
+      package-contents: |
+        
+
+      scripts: |
+        
