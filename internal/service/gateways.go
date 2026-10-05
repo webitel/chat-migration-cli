@@ -14,7 +14,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/google/uuid"
+	"github.com/gofrs/uuid/v5"
 	modelnew "github.com/webitel/chat-migration-cli/internal/model/new"
 	modelold "github.com/webitel/chat-migration-cli/internal/model/old"
 	"github.com/webitel/chat-migration-cli/internal/model/old/proto"
@@ -82,7 +82,7 @@ func (c *Converter) MigrateFacebookProviders(ctx context.Context) error {
 				}
 				migrationRows = append(migrationRows,
 					&modelnew.MigrationRow{
-						ID:         uuid.New(),
+						ID:         uuid.Must(uuid.NewV7()),
 						OldID:      strconv.Itoa(oldID),
 						NewID:      gate.ID,
 						DomainID:   int(gate.DC),
@@ -97,7 +97,7 @@ func (c *Converter) MigrateFacebookProviders(ctx context.Context) error {
 			apps = append(apps, app)
 			migrationRows = append(migrationRows,
 				&modelnew.MigrationRow{
-					ID:         uuid.New(),
+					ID:         uuid.Must(uuid.NewV7()),
 					OldID:      strconv.Itoa(oldID),
 					NewID:      app.ID,
 					DomainID:   app.DomainID,
@@ -227,7 +227,7 @@ func (c *Converter) MigrateFacebookProvidersSyncMode(ctx context.Context) error 
 				}
 				migrationRows = append(migrationRows,
 					&modelnew.MigrationRow{
-						ID:         uuid.New(),
+						ID:         uuid.Must(uuid.NewV7()),
 						OldID:      strconv.Itoa(oldID),
 						NewID:      gate.ID,
 						DomainID:   int(gate.DC),
@@ -242,7 +242,7 @@ func (c *Converter) MigrateFacebookProvidersSyncMode(ctx context.Context) error 
 			apps = append(apps, app)
 			migrationRows = append(migrationRows,
 				&modelnew.MigrationRow{
-					ID:         uuid.New(),
+					ID:         uuid.Must(uuid.NewV7()),
 					OldID:      strconv.Itoa(oldID),
 					NewID:      app.ID,
 					DomainID:   app.DomainID,
@@ -312,7 +312,7 @@ func (c *Converter) BuildMetaGates(providers []*modelold.Provider[modelold.FBPro
 			continue
 		}
 		metaApp := &modelnew.MetaApp{
-			ID:          uuid.New(),
+			ID:          uuid.Must(uuid.NewV7AtTime(provider.CreatedAt)),
 			Name:        provider.Name,
 			AppID:       metadata.ClientID,
 			AppSecret:   metadata.ClientSecret,
@@ -409,7 +409,7 @@ func (c *Converter) buildGate(provider *modelold.Provider[modelold.FBProviderMet
 	if metadata == nil {
 		return nil, fmt.Errorf("metadata is nil")
 	}
-	gateID := uuid.New()
+	gateID := uuid.Must(uuid.NewV7AtTime(provider.CreatedAt))
 	gate := &modelnew.Gate{
 		ID:        gateID,
 		DC:        int64(provider.DC),
@@ -419,7 +419,7 @@ func (c *Converter) buildGate(provider *modelold.Provider[modelold.FBProviderMet
 		UpdatedAt: provider.UpdatedAt,
 
 		Bot: &modelnew.Bot{
-			ID:        uuid.New(),
+			ID:        uuid.Must(uuid.NewV7AtTime(provider.CreatedAt)),
 			Sub:       "schema",
 			Iss:       strconv.Itoa(provider.FlowID),
 			GateID:    gateID,
@@ -474,7 +474,7 @@ func (c *Converter) convertToWABAAccounts(token, encoded string) ([]*modelnew.Ga
 	for _, account := range accounts {
 		for _, number := range account.PhoneNumbers.Data {
 			result = append(result, &modelnew.GateWABA{
-				ID:                   uuid.New(),
+				ID:                   uuid.Must(uuid.NewV7()),
 				PhoneNumber:          number.PhoneNumber,
 				PhoneNumberID:        number.ID,
 				AccessToken:          []byte(encryptedToken),

@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 
-	"github.com/google/uuid"
+	"github.com/gofrs/uuid/v5"
 	modelnew "github.com/webitel/chat-migration-cli/internal/model/new"
 	"github.com/webitel/chat-migration-cli/internal/model/old"
 )
@@ -43,7 +43,7 @@ func (c *Converter) MigratePortalAppsToAccounts(ctx context.Context) error {
 			}
 			convertedApps = append(convertedApps, account)
 			migrationRows = append(migrationRows, &modelnew.MigrationRow{
-				ID:         uuid.New(),
+				ID:         uuid.Must(uuid.NewV7()),
 				EntityType: modelnew.EntityTypePortalAppAccount,
 				OldID:      app.ID.String(),
 				NewID:      account.ID,
@@ -123,7 +123,7 @@ func convertPortalAppToAccount(log *slog.Logger, app *old.PortalApp) (*modelnew.
 	}
 
 	return &modelnew.App{
-		ID:        uuid.New(),
+		ID:        uuid.Must(uuid.NewV7AtTime(app.CreatedAt)),
 		DomainID:  app.DomainID,
 		Name:      app.Name,
 		About:     nil,

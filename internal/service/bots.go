@@ -6,7 +6,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/google/uuid"
+	"github.com/gofrs/uuid/v5"
 	modelnew "github.com/webitel/chat-migration-cli/internal/model/new"
 	"github.com/webitel/chat-migration-cli/internal/model/old"
 )
@@ -91,7 +91,7 @@ func (c *Converter) MigrateBotsToContacts(ctx context.Context) error {
 			oldID := strconv.Itoa(bot.FlowID)
 			if newBotID, mapped := botMapping[oldID]; mapped {
 				migrationRows = append(migrationRows, &modelnew.MigrationRow{
-					ID:         uuid.New(),
+					ID:         uuid.Must(uuid.NewV7()),
 					EntityType: modelnew.EntityTypeBotContact,
 					OldID:      oldID,
 					NewID:      newBotID,
@@ -183,7 +183,7 @@ func (c *Converter) MigrateBotsToContactsSyncMode(ctx context.Context) error {
 			oldID := strconv.Itoa(bot.FlowID)
 			if newBotID, mapped := botMapping[oldID]; mapped {
 				migrationRows = append(migrationRows, &modelnew.MigrationRow{
-					ID:         uuid.New(),
+					ID:         uuid.Must(uuid.NewV7()),
 					EntityType: modelnew.EntityTypeBotContact,
 					OldID:      oldID,
 					NewID:      newBotID,
@@ -228,7 +228,7 @@ func (c *Converter) MigrateBotsToContactsSyncMode(ctx context.Context) error {
 func convertBotToContact(bot *old.Bot) (*modelnew.Contact, *modelnew.MigrationRow) {
 	res := &modelnew.Contact{
 		BaseModel: modelnew.BaseModel{
-			ID:        uuid.New(),
+			ID:        uuid.Must(uuid.NewV7AtTime(bot.CreatedAt)),
 			DomainID:  bot.DC,
 			CreatedAt: bot.CreatedAt,
 			UpdatedAt: bot.UpdatedAt,
@@ -241,7 +241,7 @@ func convertBotToContact(bot *old.Bot) (*modelnew.Contact, *modelnew.MigrationRo
 		IsBot:     true,
 	}
 	migrationRow := &modelnew.MigrationRow{
-		ID:         uuid.New(),
+		ID:         uuid.Must(uuid.NewV7()),
 		EntityType: modelnew.EntityTypeBotContact,
 		OldID:      strconv.Itoa(bot.FlowID),
 		NewID:      res.ID,
