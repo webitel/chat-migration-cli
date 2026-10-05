@@ -6,25 +6,29 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/gofrs/uuid/v5"
+	"github.com/gofrs/uuid/v5" //nolint:depguard // NewV7AtTime is not available in google/uuid
+
 	modelnew "github.com/webitel/chat-migration-cli/internal/model/new"
 	"github.com/webitel/chat-migration-cli/internal/model/old"
 )
 
 func (c *Converter) MigrateClientsToContacts(ctx context.Context) error {
 	const perPage = 1000
+
 	c.log.Debug("starting clients-to-contacts migration")
 
 	lastID, err := c.newDB.MigrationStore().GetIDCursorProgress(ctx, StepClientsToContacts)
 	if err != nil {
 		return err
 	}
+
 	if lastID > 0 {
 		c.log.Info("resuming clients-to-contacts migration", "lastID", lastID)
 	}
 
 	fail := func(cause error) error {
 		_ = c.newDB.MigrationStore().MarkStepFailed(ctx, StepClientsToContacts, 0, cause.Error())
+
 		return cause
 	}
 
@@ -36,20 +40,27 @@ func (c *Converter) MigrateClientsToContacts(ctx context.Context) error {
 
 		clients, err := c.oldDB.ClientStore().Get(ctx, lastID, perPage)
 		if err != nil {
-			tx.Rollback(ctx)
+			_ = tx.Rollback(ctx)
+
 			return fail(err)
 		}
+
 		if len(clients) == 0 {
-			tx.Rollback(ctx)
+			_ = tx.Rollback(ctx)
+
 			break
 		}
+
 		c.log.Debug("clients page fetched", "lastID", lastID, "count", len(clients))
+
 		var (
 			contacts      []*modelnew.Contact
 			migrationRows []*modelnew.MigrationRow
 		)
+
 		for _, client := range clients {
 			converted := convertClientToContact(client)
+
 			contacts = append(contacts, converted...)
 			for _, contact := range converted {
 				migrationRows = append(migrationRows, &modelnew.MigrationRow{
@@ -68,15 +79,18 @@ func (c *Converter) MigrateClientsToContacts(ctx context.Context) error {
 						DomainID:   contact.DomainID,
 					})
 				}
-
 			}
 		}
+
 		if err := c.newDB.ContactStore().InsertContacts(ctx, tx, contacts); err != nil {
-			tx.Rollback(ctx)
+			_ = tx.Rollback(ctx)
+
 			return fail(err)
 		}
+
 		if err := c.newDB.MigrationStore().InsertMigrations(ctx, tx, migrationRows); err != nil {
-			tx.Rollback(ctx)
+			_ = tx.Rollback(ctx)
+
 			return fail(err)
 		}
 
@@ -84,7 +98,8 @@ func (c *Converter) MigrateClientsToContacts(ctx context.Context) error {
 		lastID = clients[len(clients)-1].ID
 
 		if err := c.newDB.MigrationStore().SaveIDCursorProgressInTx(ctx, tx, StepClientsToContacts, lastID); err != nil {
-			tx.Rollback(ctx)
+			_ = tx.Rollback(ctx)
+
 			return fail(err)
 		}
 
@@ -98,17 +113,20 @@ func (c *Converter) MigrateClientsToContacts(ctx context.Context) error {
 			break
 		}
 	}
+
 	return nil
 }
 
 func (c *Converter) MigrateClientsToContactsSyncMode(ctx context.Context) error {
 	const perPage = 1000
+
 	c.log.Debug("starting clients-to-contacts migration")
 
 	lastID, err := c.newDB.MigrationStore().GetIDCursorProgress(ctx, SyncStepClientsToContacts)
 	if err != nil {
 		return err
 	}
+
 	if lastID > 0 {
 		c.log.Info("resuming clients-to-contacts migration", "lastID", lastID)
 	}
@@ -120,6 +138,7 @@ func (c *Converter) MigrateClientsToContactsSyncMode(ctx context.Context) error 
 
 	fail := func(cause error) error {
 		_ = c.newDB.MigrationStore().MarkStepFailed(ctx, SyncStepClientsToContacts, 0, cause.Error())
+
 		return cause
 	}
 
@@ -131,20 +150,27 @@ func (c *Converter) MigrateClientsToContactsSyncMode(ctx context.Context) error 
 
 		clients, err := c.oldDB.ClientStore().GetFromDate(ctx, lastID, perPage, &completedAt)
 		if err != nil {
-			tx.Rollback(ctx)
+			_ = tx.Rollback(ctx)
+
 			return fail(err)
 		}
+
 		if len(clients) == 0 {
-			tx.Rollback(ctx)
+			_ = tx.Rollback(ctx)
+
 			break
 		}
+
 		c.log.Debug("clients page fetched", "lastID", lastID, "count", len(clients))
+
 		var (
 			contacts      []*modelnew.Contact
 			migrationRows []*modelnew.MigrationRow
 		)
+
 		for _, client := range clients {
 			converted := convertClientToContact(client)
+
 			contacts = append(contacts, converted...)
 			for _, contact := range converted {
 				migrationRows = append(migrationRows, &modelnew.MigrationRow{
@@ -163,16 +189,19 @@ func (c *Converter) MigrateClientsToContactsSyncMode(ctx context.Context) error 
 						DomainID:   contact.DomainID,
 					})
 				}
-
 			}
 		}
+
 		rowsAffected, err := c.newDB.ContactStore().InsertContactsIgnoreConflicts(ctx, tx, contacts)
 		if err != nil {
-			tx.Rollback(ctx)
+			_ = tx.Rollback(ctx)
+
 			return fail(err)
 		}
+
 		if err := c.newDB.MigrationStore().InsertMigrations(ctx, tx, migrationRows); err != nil {
-			tx.Rollback(ctx)
+			_ = tx.Rollback(ctx)
+
 			return fail(err)
 		}
 
@@ -180,7 +209,8 @@ func (c *Converter) MigrateClientsToContactsSyncMode(ctx context.Context) error 
 		lastID = clients[len(clients)-1].ID
 
 		if err := c.newDB.MigrationStore().SaveIDCursorProgressInTx(ctx, tx, SyncStepClientsToContacts, lastID); err != nil {
-			tx.Rollback(ctx)
+			_ = tx.Rollback(ctx)
+
 			return fail(err)
 		}
 
@@ -194,32 +224,39 @@ func (c *Converter) MigrateClientsToContactsSyncMode(ctx context.Context) error 
 			break
 		}
 	}
+
 	return nil
 }
 
 func (c *Converter) MigratePortalClientsToContacts(ctx context.Context) error {
-	var (
-		perPage = 1000
-	)
+	perPage := 1000
+
 	c.log.Debug("starting portal-clients-to-contacts migration")
+
 	tx, err := c.newDB.Pool().Begin(ctx)
 	if err != nil {
 		return err
 	}
+
 	err = PagerFunc(ctx, perPage, func(ctx context.Context, offset, limit int) (bool, error) {
 		iterate := true
+
 		clients, err := c.oldDB.ClientStore().GetPortalClients(ctx, offset, limit)
 		if err != nil {
 			return false, err
 		}
+
 		if len(clients) < limit {
 			iterate = false
 		}
+
 		c.log.Debug("portal clients page fetched", "offset", offset, "count", len(clients))
+
 		var (
 			contacts      []*modelnew.Contact
 			migrationRows []*modelnew.MigrationRow
 		)
+
 		for _, client := range clients {
 			contact := convertPortalClientToContact(client)
 			contacts = append(contacts, contact)
@@ -231,27 +268,33 @@ func (c *Converter) MigratePortalClientsToContacts(ctx context.Context) error {
 				DomainID:   contact.DomainID,
 			})
 		}
+
 		if err := c.newDB.ContactStore().InsertContacts(ctx, tx, contacts); err != nil {
 			return false, err
 		}
+
 		if err := c.newDB.MigrationStore().InsertMigrations(ctx, tx, migrationRows); err != nil {
 			return false, err
 		}
+
 		c.addRecordsMigrated(len(contacts))
+
 		return iterate, nil
 	})
 	if err != nil {
-		tx.Rollback(ctx)
+		_ = tx.Rollback(ctx)
+
 		return err
 	}
+
 	return tx.Commit(ctx)
 }
 
 func (c *Converter) MigratePortalClientsToContactsSyncMode(ctx context.Context) error {
-	var (
-		perPage = 1000
-	)
+	perPage := 1000
+
 	c.log.Debug("starting portal-clients-to-contacts migration")
+
 	tx, err := c.newDB.Pool().Begin(ctx)
 	if err != nil {
 		return err
@@ -259,24 +302,30 @@ func (c *Converter) MigratePortalClientsToContactsSyncMode(ctx context.Context) 
 
 	completedAt, err := c.GetStepCompletedAtInTx(ctx, tx, SyncStepPortalClientsToContacts)
 	if err != nil {
-		tx.Rollback(ctx)
+		_ = tx.Rollback(ctx)
+
 		return err
 	}
 
 	err = PagerFunc(ctx, perPage, func(ctx context.Context, offset, limit int) (bool, error) {
 		iterate := true
+
 		clients, err := c.oldDB.ClientStore().GetPortalClientsFromDate(ctx, offset, limit, &completedAt)
 		if err != nil {
 			return false, err
 		}
+
 		if len(clients) < limit {
 			iterate = false
 		}
+
 		c.log.Debug("portal clients page fetched", "offset", offset, "count", len(clients))
+
 		var (
 			contacts      []*modelnew.Contact
 			migrationRows []*modelnew.MigrationRow
 		)
+
 		for _, client := range clients {
 			contact := convertPortalClientToContact(client)
 			contacts = append(contacts, contact)
@@ -287,20 +336,24 @@ func (c *Converter) MigratePortalClientsToContactsSyncMode(ctx context.Context) 
 				NewID:      contact.ID,
 				DomainID:   contact.DomainID,
 			})
-
 		}
+
 		rowsAffected, err := c.newDB.ContactStore().InsertContactsIgnoreConflicts(ctx, tx, contacts)
 		if err != nil {
 			return false, err
 		}
+
 		if err := c.newDB.MigrationStore().InsertMigrations(ctx, tx, migrationRows); err != nil {
 			return false, err
 		}
+
 		c.addRecordsMigrated(int(rowsAffected))
+
 		return iterate, nil
 	})
 	if err != nil {
-		tx.Rollback(ctx)
+		_ = tx.Rollback(ctx)
+
 		return err
 	}
 
@@ -308,7 +361,7 @@ func (c *Converter) MigratePortalClientsToContactsSyncMode(ctx context.Context) 
 }
 
 func convertClientToContact(client *old.Client) []*modelnew.Contact {
-	var contacts []*modelnew.Contact
+	contacts := make([]*modelnew.Contact, 0, len(client.DomainIDs))
 	for _, domain := range client.DomainIDs {
 		contacts = append(contacts, &modelnew.Contact{
 			BaseModel: modelnew.BaseModel{
@@ -325,6 +378,7 @@ func convertClientToContact(client *old.Client) []*modelnew.Contact {
 			IsBot:     false,
 		})
 	}
+
 	return contacts
 }
 
@@ -333,6 +387,7 @@ func convertPortalClientToContact(client *old.PortalClient) *modelnew.Contact {
 	if client.UpdatedAt != nil {
 		updatedAt = *client.UpdatedAt
 	}
+
 	return &modelnew.Contact{
 		BaseModel: modelnew.BaseModel{
 			ID:        uuid.Must(uuid.NewV7AtTime(client.CreatedAt)),
@@ -357,6 +412,7 @@ func buildUsername(name, userType, userID string) string {
 	replacedName := replaceCharactersForUsername(name)
 	replacedType := replaceCharactersForUsername(userType)
 	replacedID := replaceCharactersForUsername(userID)
+
 	return fmt.Sprintf("%s_%s_%s", replacedName, replacedType, replacedID)
 }
 
@@ -364,5 +420,6 @@ func replaceCharactersForUsername(in string) string {
 	lowered := strings.ToLower(in)
 	replacedBlank := strings.ReplaceAll(lowered, " ", "_")
 	replacedDash := strings.ReplaceAll(replacedBlank, "-", "_")
+
 	return replacedDash
 }

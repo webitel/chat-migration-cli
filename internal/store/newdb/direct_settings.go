@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/jackc/pgx/v5"
+
 	modelnew "github.com/webitel/chat-migration-cli/internal/model/new"
 )
 

@@ -11,12 +11,14 @@ func (c *Converter) SyncContactsVias(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback(ctx)
+
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	rowsAffected, err := c.newDB.ContactStore().SyncContactVias(ctx, tx)
 	if err != nil {
 		return err
 	}
+
 	c.addRecordsMigrated(int(rowsAffected))
 
 	return tx.Commit(ctx)

@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+
 	"github.com/webitel/chat-migration-cli/internal/model/old"
 )
 
@@ -18,9 +19,8 @@ func NewClientStore(db *DB) *ClientStore {
 
 // Get returns the next page of clients ordered by id, keyset-paginated after afterID
 // (i.e. c.id > afterID) rather than OFFSET-paginated, to avoid O(N) skip cost on large tables.
-func (s *ClientStore) Get(ctx context.Context, afterID int, limit int) ([]*old.Client, error) {
-	var (
-		query = `SELECT
+func (s *ClientStore) Get(ctx context.Context, afterID, limit int) ([]*old.Client, error) {
+	query := `SELECT
     id,
        name,
        number,
@@ -41,13 +41,15 @@ WHERE channels.domains IS NOT NULL
 AND type != 'portal'
 AND c.id > $1
 ORDER BY c.id LIMIT $2`
-	)
+
 	if afterID < 0 {
 		afterID = 0
 	}
+
 	if limit < 1 {
 		limit = 1
 	}
+
 	rows, err := s.db.Pool().Query(ctx, query, afterID, limit)
 	if err != nil {
 		return nil, err
@@ -63,9 +65,8 @@ ORDER BY c.id LIMIT $2`
 }
 
 // GetFromDate is Get filtered to clients created at or after from, for sync mode.
-func (s *ClientStore) GetFromDate(ctx context.Context, afterID int, limit int, from *time.Time) ([]*old.Client, error) {
-	var (
-		query = `SELECT
+func (s *ClientStore) GetFromDate(ctx context.Context, afterID, limit int, from *time.Time) ([]*old.Client, error) {
+	query := `SELECT
     id,
        name,
        number,
@@ -86,14 +87,17 @@ WHERE channels.domains IS NOT NULL
 AND type != 'portal'
 AND ($3::timestamp IS NULL OR c.created_at >= $3::timestamp)
 AND c.id > $1`
-	)
+
 	if afterID < 0 {
 		afterID = 0
 	}
+
 	if limit < 1 {
 		limit = 1
 	}
+
 	query += ` ORDER BY c.id LIMIT $2`
+
 	rows, err := s.db.Pool().Query(ctx, query, afterID, limit, from)
 	if err != nil {
 		return nil, err
@@ -108,9 +112,8 @@ AND c.id > $1`
 	return res, nil
 }
 
-func (s *ClientStore) GetPortalClients(ctx context.Context, offset int, limit int) ([]*old.PortalClient, error) {
-	var (
-		query = `SELECT c.id,
+func (s *ClientStore) GetPortalClients(ctx context.Context, offset, limit int) ([]*old.PortalClient, error) {
+	query := `SELECT c.id,
 					merged_identity."name" AS name,
 					merged_identity.phone_number AS number,
 					acc.created_at AS created_at,
@@ -133,14 +136,17 @@ func (s *ClientStore) GetPortalClients(ctx context.Context, offset int, limit in
                 ON merged_identity.id = acc.profile_id
 				WHERE c.type = 'portal'
 				ORDER BY c.id`
-	)
+
 	if offset < 0 {
 		offset = 0
 	}
+
 	if limit < 1 {
 		limit = 1
 	}
+
 	query += ` OFFSET $1 LIMIT $2`
+
 	rows, err := s.db.Pool().Query(ctx, query, offset, limit)
 	if err != nil {
 		return nil, err
@@ -155,9 +161,8 @@ func (s *ClientStore) GetPortalClients(ctx context.Context, offset int, limit in
 	return res, nil
 }
 
-func (s *ClientStore) GetPortalClientsFromDate(ctx context.Context, offset int, limit int, from *time.Time) ([]*old.PortalClient, error) {
-	var (
-		query = `SELECT c.id,
+func (s *ClientStore) GetPortalClientsFromDate(ctx context.Context, offset, limit int, from *time.Time) ([]*old.PortalClient, error) {
+	query := `SELECT c.id,
 			i."name" AS name,
 			i.phone_number AS number,
 			acc.created_at AS created_at,
@@ -175,14 +180,17 @@ func (s *ClientStore) GetPortalClientsFromDate(ctx context.Context, offset int, 
 		WHERE c.type = 'portal' AND c.external_id ~ '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
 		AND ($3::timestamp IS NULL OR c.created_at >= $3::timestamp)
 		ORDER BY c.id`
-	)
+
 	if offset < 0 {
 		offset = 0
 	}
+
 	if limit < 1 {
 		limit = 1
 	}
+
 	query += ` OFFSET $1 LIMIT $2`
+
 	rows, err := s.db.Pool().Query(ctx, query, offset, limit, from)
 	if err != nil {
 		return nil, err

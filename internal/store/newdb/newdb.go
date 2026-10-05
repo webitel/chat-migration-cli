@@ -27,6 +27,7 @@ func New(pool *pgxpool.Pool, migratePortals bool) (*DB, error) {
 	if err := db.initializeMigrationTable(context.Background(), migratePortals); err != nil {
 		return nil, errors.Join(errors.New("failed to init migration table"), err)
 	}
+
 	return db, nil
 }
 
@@ -38,6 +39,7 @@ func (db *DB) ContactStore() *ContactStore {
 	if db.contactStore == nil {
 		db.contactStore = NewContactStore(db)
 	}
+
 	return db.contactStore
 }
 
@@ -45,6 +47,7 @@ func (db *DB) ThreadStore() *ThreadStore {
 	if db.threadStore == nil {
 		db.threadStore = NewThreadStore(db)
 	}
+
 	return db.threadStore
 }
 
@@ -52,6 +55,7 @@ func (db *DB) DirectSettingsStore() *DirectSettingsStore {
 	if db.directSettingsStore == nil {
 		db.directSettingsStore = NewDirectSettingsStore(db)
 	}
+
 	return db.directSettingsStore
 }
 
@@ -59,6 +63,7 @@ func (db *DB) MigrationStore() *MigrationStore {
 	if db.migrationStore == nil {
 		db.migrationStore = NewMigrationStore(db)
 	}
+
 	return db.migrationStore
 }
 
@@ -66,10 +71,11 @@ func (db *DB) MessageStore() *MessageStore {
 	if db.messageStore == nil {
 		db.messageStore = NewMessageStore(db)
 	}
+
 	return db.messageStore
 }
 
-func (db *DB) initializeMigrationTable(ctx context.Context, migratePortals bool) error {
+func (db *DB) initializeMigrationTable(ctx context.Context, _ bool) error {
 	_, err := db.pool.Exec(ctx, `CREATE TABLE IF NOT EXISTS public.chat_migration(
 	id UUID PRIMARY KEY NOT NULL DEFAULT gen_random_uuid(),
 	entity_type TEXT NOT NULL,
@@ -99,7 +105,6 @@ func (db *DB) initializeMigrationTable(ctx context.Context, migratePortals bool)
 		return err
 	}
 
-
 	return err
 }
 
@@ -107,6 +112,7 @@ func (db *DB) ThreadDialogStore() *ThreadDialogStore {
 	if db.threadDialogStore == nil {
 		db.threadDialogStore = &ThreadDialogStore{store: db}
 	}
+
 	return db.threadDialogStore
 }
 
@@ -114,6 +120,7 @@ func (db *DB) ProviderStore() *ProviderStore {
 	if db.providerStore == nil {
 		db.providerStore = NewProviderStore(db)
 	}
+
 	return db.providerStore
 }
 
@@ -121,6 +128,7 @@ func (db *DB) AppStore() *AppStore {
 	if db.appStore == nil {
 		db.appStore = NewAppStore(db)
 	}
+
 	return db.appStore
 }
 
@@ -128,5 +136,6 @@ func (db *DB) BotMappingStore() *BotMappingStore {
 	if db.botMappingStore == nil {
 		db.botMappingStore = NewBotMappingStore(db)
 	}
+
 	return db.botMappingStore
 }

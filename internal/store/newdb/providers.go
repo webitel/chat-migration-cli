@@ -5,6 +5,7 @@ import (
 
 	"github.com/Masterminds/squirrel"
 	"github.com/jackc/pgx/v5"
+
 	"github.com/webitel/chat-migration-cli/internal/model/new"
 )
 
@@ -44,6 +45,7 @@ func (s *ProviderStore) InsertGates(ctx context.Context, tx pgx.Tx, gates []*new
 	}
 
 	_, err = tx.Exec(ctx, sql, args...)
+
 	return err
 }
 
@@ -82,6 +84,7 @@ func (s *ProviderStore) InsertMetaApps(ctx context.Context, tx pgx.Tx, apps []*n
 	}
 
 	_, err = tx.Exec(ctx, sql, args...)
+
 	return err
 }
 
@@ -118,6 +121,7 @@ func (s *ProviderStore) InsertGateWABAs(ctx context.Context, tx pgx.Tx, gates []
 	}
 
 	_, err = tx.Exec(ctx, sql, args...)
+
 	return err
 }
 
@@ -148,6 +152,7 @@ func (s *ProviderStore) InsertFacebooks(ctx context.Context, tx pgx.Tx, pages []
 	}
 
 	_, err = tx.Exec(ctx, sql, args...)
+
 	return err
 }
 
@@ -182,5 +187,6 @@ func (s *ProviderStore) InsertBots(ctx context.Context, tx pgx.Tx, bots []*new.B
 	}
 
 	_, err = tx.Exec(ctx, sql, args...)
+
 	return err
 }

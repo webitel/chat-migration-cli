@@ -5,6 +5,7 @@ import (
 
 	"github.com/Masterminds/squirrel"
 	"github.com/jackc/pgx/v5"
+
 	modelnew "github.com/webitel/chat-migration-cli/internal/model/new"
 )
 
@@ -16,6 +17,7 @@ func (s *ThreadDialogStore) InsertThreadDialogs(ctx context.Context, tx pgx.Tx, 
 	if len(threadDialogs) == 0 {
 		return nil
 	}
+
 	var (
 		threadDialogQuery = squirrel.StatementBuilder.PlaceholderFormat(squirrel.Dollar).Insert("im_thread.thread_dialog").Columns(
 			"id",
@@ -77,9 +79,11 @@ func (s *ThreadDialogStore) InsertThreadDialogs(ctx context.Context, tx pgx.Tx, 
 	if err != nil {
 		return err
 	}
+
 	_, err = tx.Exec(ctx, sqlPermission, argsPermission...)
 	if err != nil {
 		return err
 	}
+
 	return nil
 }

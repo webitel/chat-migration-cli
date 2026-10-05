@@ -6,41 +6,49 @@ import (
 	"fmt"
 	"log/slog"
 
-	"github.com/gofrs/uuid/v5"
+	"github.com/gofrs/uuid/v5" //nolint:depguard // NewV7AtTime is not available in google/uuid
+
 	modelnew "github.com/webitel/chat-migration-cli/internal/model/new"
 	"github.com/webitel/chat-migration-cli/internal/model/old"
 )
 
 func (c *Converter) MigratePortalAppsToAccounts(ctx context.Context) error {
-	var (
-		perPage = 1000
-	)
+	perPage := 1000
+
 	c.log.Debug("starting portal-apps-to-accounts migration")
+
 	tx, err := c.newDB.Pool().Begin(ctx)
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback(ctx)
+
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	err = PagerFunc(ctx, perPage, func(ctx context.Context, offset, limit int) (bool, error) {
 		iterate := true
+
 		apps, err := c.oldDB.AppStore().Get(ctx, offset, limit)
 		if err != nil {
 			return false, err
 		}
+
 		if len(apps) < limit {
 			iterate = false
 		}
+
 		c.log.Debug("portal apps page fetched", "offset", offset, "count", len(apps))
+
 		var (
 			convertedApps []*modelnew.App
 			migrationRows []*modelnew.MigrationRow
 		)
+
 		for _, app := range apps {
 			account, err := convertPortalAppToAccount(c.log, app)
 			if err != nil {
 				return false, fmt.Errorf("convert portal app %s: %w", app.ID, err)
 			}
+
 			convertedApps = append(convertedApps, account)
 			migrationRows = append(migrationRows, &modelnew.MigrationRow{
 				ID:         uuid.Must(uuid.NewV7()),
@@ -50,18 +58,23 @@ func (c *Converter) MigratePortalAppsToAccounts(ctx context.Context) error {
 				DomainID:   account.DomainID,
 			})
 		}
+
 		if err := c.newDB.AppStore().InsertApps(ctx, tx, convertedApps); err != nil {
 			return false, fmt.Errorf("insert accounts: %w", err)
 		}
+
 		if err := c.newDB.MigrationStore().InsertMigrations(ctx, tx, migrationRows); err != nil {
 			return false, fmt.Errorf("insert migration rows: %w", err)
 		}
+
 		c.addRecordsMigrated(len(convertedApps))
+
 		return iterate, nil
 	})
 	if err != nil {
 		return err
 	}
+
 	return tx.Commit(ctx)
 }
 
@@ -75,14 +88,17 @@ func convertPortalAppToAccount(log *slog.Logger, app *old.PortalApp) (*modelnew.
 		if len(app.Net) > 0 {
 			clients.Net = &modelnew.ClientNet{Cidr: app.Net}
 		}
+
 		if len(app.Web) > 0 {
 			clients.Web = &modelnew.ClientWeb{Origin: app.Web}
 		}
+
 		if len(app.Issuers) > 0 {
 			idp := make(map[string]string, len(app.Issuers))
 			for _, issuer := range app.Issuers {
 				idp[issuer] = ""
 			}
+
 			clients.Idp = idp
 		}
 
@@ -90,21 +106,25 @@ func convertPortalAppToAccount(log *slog.Logger, app *old.PortalApp) (*modelnew.
 		if len(app.JwtIdentity) > 0 {
 			if err := json.Unmarshal(app.JwtIdentity, &jwtClaims); err != nil {
 				log.Warn("portal app jwt_identity is not a flat string map, dropping claims", "app_id", app.ID, "error", err)
+
 				jwtClaims = nil
 			}
 		}
+
 		jwksURI := ""
 		if app.JwksURI != nil {
 			jwksURI = *app.JwksURI
 		}
+
 		if jwksURI != "" || len(app.Jwks) > 0 || len(jwtClaims) > 0 {
 			clients.Jwt = &modelnew.JwtIdentity{
 				Enabled: true,
-				JwksUri: jwksURI,
+				JwksURI: jwksURI,
 				Jwks:    app.Jwks,
 				Claims:  jwtClaims,
 			}
 		}
+
 		config.Clients = clients
 	}
 
@@ -112,6 +132,7 @@ func convertPortalAppToAccount(log *slog.Logger, app *old.PortalApp) (*modelnew.
 	// compatibility with the new AppService.Secret field is unconfirmed.
 	service := &modelnew.AppServiceConfig{}
 	service.PushService = validJSONOrNil(log, app.ID, "push", app.Push)
+
 	service.RateLimits = validJSONOrNil(log, app.ID, "limit", app.Limit)
 	if service.PushService != nil || service.RateLimits != nil || service.SendUpdate != nil || service.Secret != "" {
 		config.Service = service
@@ -142,9 +163,12 @@ func validJSONOrNil(log *slog.Logger, appID uuid.UUID, field string, raw []byte)
 	if len(raw) == 0 {
 		return nil
 	}
+
 	if !json.Valid(raw) {
 		log.Warn("portal app field is not valid JSON, dropping from migrated config", "app_id", appID, "field", field)
+
 		return nil
 	}
+
 	return json.RawMessage(raw)
 }

@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/jackc/pgx/v5"
+
 	modelnew "github.com/webitel/chat-migration-cli/internal/model/new"
 )
 
@@ -22,6 +23,7 @@ func NewBotMappingStore(db *DB) *BotMappingStore {
 func (s *BotMappingStore) GetAll(ctx context.Context, schema, table string) ([]*modelnew.BotMapping, error) {
 	ident := pgx.Identifier{schema, table}.Sanitize()
 	query := fmt.Sprintf("SELECT old_bot_id, new_bot_id FROM %s", ident)
+
 	rows, err := s.db.pool.Query(ctx, query)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read bot mapping table %s.%s: %w", schema, table, err)
@@ -32,5 +34,6 @@ func (s *BotMappingStore) GetAll(ctx context.Context, schema, table string) ([]*
 	if err != nil {
 		return nil, fmt.Errorf("failed to scan bot mapping table %s.%s (check for NULL old_bot_id/new_bot_id): %w", schema, table, err)
 	}
+
 	return result, nil
 }
