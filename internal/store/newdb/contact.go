@@ -5,6 +5,7 @@ import (
 
 	"github.com/Masterminds/squirrel"
 	"github.com/jackc/pgx/v5"
+
 	"github.com/webitel/chat-migration-cli/internal/model/new"
 )
 
@@ -20,22 +21,21 @@ func (s *ContactStore) InsertContacts(ctx context.Context, tx pgx.Tx, contacts [
 	if len(contacts) == 0 {
 		return nil
 	}
-	var (
-		query = squirrel.Insert("im_contact.contact").Columns(
-			"id",
-			"domain_id",
-			"created_at",
-			"updated_at",
-			"issuer_id",
-			"application_id",
-			"subject_id",
-			"type",
-			"name",
-			"username",
-			"metadata",
-			"is_bot",
-		).PlaceholderFormat(squirrel.Dollar)
-	)
+
+	query := squirrel.Insert("im_contact.contact").Columns(
+		"id",
+		"domain_id",
+		"created_at",
+		"updated_at",
+		"issuer_id",
+		"application_id",
+		"subject_id",
+		"type",
+		"name",
+		"username",
+		"metadata",
+		"is_bot",
+	).PlaceholderFormat(squirrel.Dollar)
 
 	for _, contact := range contacts {
 		query = query.Values(
@@ -65,28 +65,27 @@ func (s *ContactStore) InsertContacts(ctx context.Context, tx pgx.Tx, contacts [
 	}
 
 	return nil
-
 }
+
 func (s *ContactStore) InsertContactsIgnoreConflicts(ctx context.Context, tx pgx.Tx, contacts []*new.Contact) (int64, error) {
 	if len(contacts) == 0 {
 		return 0, nil
 	}
-	var (
-		query = squirrel.Insert("im_contact.contact").Columns(
-			"id",
-			"domain_id",
-			"created_at",
-			"updated_at",
-			"issuer_id",
-			"application_id",
-			"subject_id",
-			"type",
-			"name",
-			"username",
-			"metadata",
-			"is_bot",
-		).PlaceholderFormat(squirrel.Dollar).Suffix("ON CONFLICT DO NOTHING")
-	)
+
+	query := squirrel.Insert("im_contact.contact").Columns(
+		"id",
+		"domain_id",
+		"created_at",
+		"updated_at",
+		"issuer_id",
+		"application_id",
+		"subject_id",
+		"type",
+		"name",
+		"username",
+		"metadata",
+		"is_bot",
+	).PlaceholderFormat(squirrel.Dollar).Suffix("ON CONFLICT DO NOTHING")
 
 	for _, contact := range contacts {
 		query = query.Values(
@@ -116,7 +115,6 @@ func (s *ContactStore) InsertContactsIgnoreConflicts(ctx context.Context, tx pgx
 	}
 
 	return tag.RowsAffected(), nil
-
 }
 
 func (s *ContactStore) SyncContactVias(ctx context.Context, tx pgx.Tx) (int64, error) {
@@ -133,10 +131,12 @@ SELECT contact_id, gate_id
 FROM chain
 ON CONFLICT (contact_id, via) DO NOTHING;
 `
+
 	tag, err := tx.Exec(ctx, query)
 	if err != nil {
 		return 0, err
 	}
+
 	return tag.RowsAffected(), nil
 }
 
@@ -144,12 +144,12 @@ func (s *ContactStore) GetByWebitelUserIDs(ctx context.Context, tx pgx.Tx, webit
 	if len(webitelUserIDs) == 0 {
 		return nil, nil
 	}
-	var (
-		query = `
+
+	query := `
 		SELECT id, domain_id, created_at, updated_at, issuer_id, application_id, subject_id, type, name, username, metadata, is_bot
 		FROM im_contact.contact
 		WHERE subject_id = ANY($1::text[]) AND issuer_id = 'webitel' AND is_bot = false`
-	)
+
 	rows, err := tx.Query(ctx, query, webitelUserIDs)
 	if err != nil {
 		return nil, err
@@ -160,18 +160,20 @@ func (s *ContactStore) GetByWebitelUserIDs(ctx context.Context, tx pgx.Tx, webit
 	if err != nil {
 		return nil, err
 	}
+
 	return result, nil
 }
+
 func (s *ContactStore) GetByFlowIDs(ctx context.Context, tx pgx.Tx, flowIDs []string) ([]*new.Contact, error) {
 	if len(flowIDs) == 0 {
 		return nil, nil
 	}
-	var (
-		query = `
+
+	query := `
 		SELECT id, domain_id, created_at, updated_at, issuer_id, application_id, subject_id, type, name, username, metadata, is_bot
 		FROM im_contact.contact
 		WHERE subject_id = ANY($1::text[]) AND issuer_id = 'schema' AND is_bot = false`
-	)
+
 	rows, err := tx.Query(ctx, query, flowIDs)
 	if err != nil {
 		return nil, err
@@ -182,5 +184,6 @@ func (s *ContactStore) GetByFlowIDs(ctx context.Context, tx pgx.Tx, flowIDs []st
 	if err != nil {
 		return nil, err
 	}
+
 	return result, nil
 }

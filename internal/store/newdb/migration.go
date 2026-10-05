@@ -10,6 +10,7 @@ import (
 
 	"github.com/Masterminds/squirrel"
 	"github.com/jackc/pgx/v5"
+
 	modelnew "github.com/webitel/chat-migration-cli/internal/model/new"
 )
 
@@ -25,13 +26,13 @@ func (s *MigrationStore) GetMigrationRow(ctx context.Context, tx pgx.Tx, filters
 	if tx == nil {
 		return nil, errors.New("transaction required")
 	}
-	var (
-		query = squirrel.StatementBuilder.
-			PlaceholderFormat(squirrel.Dollar).
-			Select("*").
-			From("public.chat_migration")
-	)
+
+	query := squirrel.StatementBuilder.
+		PlaceholderFormat(squirrel.Dollar).
+		Select("*").
+		From("public.chat_migration")
 	query = s.applyFilters(query, filters)
+
 	sql, args, err := query.ToSql()
 	if err != nil {
 		return nil, err
@@ -58,12 +59,15 @@ func (s *MigrationStore) applyFilters(query squirrel.SelectBuilder, filters *mod
 	if len(filters.Type) != 0 {
 		query = query.Where("entity_type = ANY(?)", filters.Type)
 	}
+
 	if len(filters.OldIDs) != 0 {
 		query = query.Where("old_id = ANY(?)", filters.OldIDs)
 	}
+
 	if len(filters.ExtraKeys) != 0 {
 		query = query.Where("extra_key = ANY(?)", filters.ExtraKeys)
 	}
+
 	if filters.DomainID != 0 {
 		query = query.Where("domain_id = ?", filters.DomainID)
 	}
@@ -75,12 +79,11 @@ func (s *MigrationStore) GetMigrationRows(ctx context.Context, tx pgx.Tx, filter
 	if tx == nil {
 		return nil, errors.New("transaction required")
 	}
-	var (
-		query = squirrel.StatementBuilder.
-			PlaceholderFormat(squirrel.Dollar).
-			Select("*").
-			From("public.chat_migration")
-	)
+
+	query := squirrel.StatementBuilder.
+		PlaceholderFormat(squirrel.Dollar).
+		Select("*").
+		From("public.chat_migration")
 
 	query = s.applyFilters(query, filters)
 
@@ -121,15 +124,13 @@ func (s *MigrationStore) InsertMigrations(ctx context.Context, tx pgx.Tx, migrat
 
 		chunk := migrations[i:end]
 
-		var (
-			query = squirrel.StatementBuilder.PlaceholderFormat(squirrel.Dollar).Insert("public.chat_migration").Columns(
-				"id",
-				"entity_type",
-				"old_id",
-				"new_id",
-				"domain_id",
-				"extra_key",
-			)
+		query := squirrel.StatementBuilder.PlaceholderFormat(squirrel.Dollar).Insert("public.chat_migration").Columns(
+			"id",
+			"entity_type",
+			"old_id",
+			"new_id",
+			"domain_id",
+			"extra_key",
 		)
 		for _, migration := range chunk {
 			query = query.Values(
@@ -156,11 +157,8 @@ func (s *MigrationStore) InsertMigrations(ctx context.Context, tx pgx.Tx, migrat
 	return nil
 }
 
-func (s *MigrationStore) NullifyMigrationRowsExtraKey(ctx context.Context, tx pgx.Tx, extraKey string, migrationType string) error {
-
-	var (
-		query = `UPDATE public.chat_migration SET extra_key = NULL WHERE extra_key = $1 AND entity_type = $2`
-	)
+func (s *MigrationStore) NullifyMigrationRowsExtraKey(ctx context.Context, tx pgx.Tx, extraKey, migrationType string) error {
+	query := `UPDATE public.chat_migration SET extra_key = NULL WHERE extra_key = $1 AND entity_type = $2`
 
 	_, err := tx.Exec(ctx, query, extraKey, migrationType)
 	if err != nil {
@@ -178,11 +176,13 @@ func (s *MigrationStore) GetCompletedSteps(ctx context.Context) (map[string]stru
 	defer rows.Close()
 
 	completed := make(map[string]struct{})
+
 	for rows.Next() {
 		var step string
 		if err := rows.Scan(&step); err != nil {
 			return nil, err
 		}
+
 		completed[step] = struct{}{}
 	}
 
@@ -199,6 +199,7 @@ func (s *MigrationStore) MarkStepCompleted(ctx context.Context, step string) err
 		VALUES (gen_random_uuid(), $1, 'completed', 0, now())
 		ON CONFLICT (step) DO UPDATE SET status = 'completed', page_offset = 0, page_cursor = NULL, error = NULL, completed_at = now()
 	`, step)
+
 	return err
 }
 
@@ -206,6 +207,7 @@ func (s *MigrationStore) MarkStepCompleted(ctx context.Context, step string) err
 // Returns 0 if the step has no recorded progress (first run).
 func (s *MigrationStore) GetStepProgress(ctx context.Context, step string) (int, error) {
 	var offset int
+
 	err := s.store.Pool().QueryRow(ctx, `
 		SELECT page_offset FROM public.chat_migration_step
 		WHERE step = $1 AND status != 'completed'
@@ -213,11 +215,13 @@ func (s *MigrationStore) GetStepProgress(ctx context.Context, step string) (int,
 	if errors.Is(err, pgx.ErrNoRows) {
 		return 0, nil
 	}
+
 	return offset, err
 }
 
-func (s *MigrationStore) GetStepCompletedAtInTx(ctx context.Context, tx pgx.Tx, step string, stepAnalog string) (time.Time, error) {
+func (s *MigrationStore) GetStepCompletedAtInTx(ctx context.Context, tx pgx.Tx, step, stepAnalog string) (time.Time, error) {
 	var completedAt *time.Time
+
 	err := tx.QueryRow(ctx, `
 		SELECT max(completed_at) FROM public.chat_migration_step
 		WHERE step = $1 OR step = $2;
@@ -225,14 +229,17 @@ func (s *MigrationStore) GetStepCompletedAtInTx(ctx context.Context, tx pgx.Tx, 
 	if errors.Is(err, pgx.ErrNoRows) {
 		return time.Time{}, nil
 	}
+
 	if completedAt == nil {
 		return time.Time{}, nil
 	}
+
 	return *completedAt, err
 }
 
-func (s *MigrationStore) GetStepCompletedAt(ctx context.Context, step string, stepAnalog string) (time.Time, error) {
+func (s *MigrationStore) GetStepCompletedAt(ctx context.Context, step, stepAnalog string) (time.Time, error) {
 	var completedAt *time.Time
+
 	err := s.store.Pool().QueryRow(ctx, `
 		SELECT max(completed_at) FROM public.chat_migration_step
 		WHERE step = $1 OR step = $2;
@@ -240,9 +247,11 @@ func (s *MigrationStore) GetStepCompletedAt(ctx context.Context, step string, st
 	if errors.Is(err, pgx.ErrNoRows) {
 		return time.Time{}, nil
 	}
+
 	if completedAt == nil {
 		return time.Time{}, nil
 	}
+
 	return *completedAt, err
 }
 
@@ -253,13 +262,15 @@ func (s *MigrationStore) SaveStepProgressInTx(ctx context.Context, tx pgx.Tx, st
 		VALUES (gen_random_uuid(), $1, 'in_progress', $2)
 		ON CONFLICT (step) DO UPDATE SET status = 'in_progress', page_offset = EXCLUDED.page_offset, error = NULL
 	`, step, offset)
+
 	return err
 }
 
 // GetCursorProgress returns the last successfully committed keyset cursor for a step.
 // Returns (0, 0, nil) if the step has no recorded cursor progress (first run).
-func (s *MigrationStore) GetCursorProgress(ctx context.Context, step string) (initiator int, flowID int, err error) {
+func (s *MigrationStore) GetCursorProgress(ctx context.Context, step string) (initiator, flowID int, err error) {
 	var cursor *string
+
 	err = s.store.Pool().QueryRow(ctx, `
 		SELECT page_cursor FROM public.chat_migration_step
 		WHERE step = $1 AND status != 'completed'
@@ -267,31 +278,37 @@ func (s *MigrationStore) GetCursorProgress(ctx context.Context, step string) (in
 	if errors.Is(err, pgx.ErrNoRows) {
 		return 0, 0, nil
 	}
+
 	if err != nil || cursor == nil {
 		return 0, 0, err
 	}
+
 	parts := strings.SplitN(*cursor, ":", 2)
 	if len(parts) != 2 {
 		return 0, 0, fmt.Errorf("invalid cursor %q", *cursor)
 	}
+
 	initiator, err = strconv.Atoi(parts[0])
 	if err != nil {
 		return 0, 0, fmt.Errorf("invalid cursor initiator: %w", err)
 	}
+
 	flowID, err = strconv.Atoi(parts[1])
 	if err != nil {
 		return 0, 0, fmt.Errorf("invalid cursor flowID: %w", err)
 	}
+
 	return initiator, flowID, nil
 }
 
-func (s *MigrationStore) SaveCursorProgressInTx(ctx context.Context, tx pgx.Tx, step string, initiator int, flowID int) error {
+func (s *MigrationStore) SaveCursorProgressInTx(ctx context.Context, tx pgx.Tx, step string, initiator, flowID int) error {
 	cursor := fmt.Sprintf("%d:%d", initiator, flowID)
 	_, err := tx.Exec(ctx, `
 		INSERT INTO public.chat_migration_step (id, step, status, page_cursor)
 		VALUES (gen_random_uuid(), $1, 'in_progress', $2)
 		ON CONFLICT (step) DO UPDATE SET status = 'in_progress', page_cursor = EXCLUDED.page_cursor, error = NULL
 	`, step, cursor)
+
 	return err
 }
 
@@ -300,6 +317,7 @@ func (s *MigrationStore) SaveCursorProgressInTx(ctx context.Context, tx pgx.Tx, 
 // progress (first run).
 func (s *MigrationStore) GetIDCursorProgress(ctx context.Context, step string) (id int, err error) {
 	var cursor *string
+
 	err = s.store.Pool().QueryRow(ctx, `
 		SELECT page_cursor FROM public.chat_migration_step
 		WHERE step = $1 AND status != 'completed'
@@ -307,13 +325,16 @@ func (s *MigrationStore) GetIDCursorProgress(ctx context.Context, step string) (
 	if errors.Is(err, pgx.ErrNoRows) {
 		return 0, nil
 	}
+
 	if err != nil || cursor == nil {
 		return 0, err
 	}
+
 	id, err = strconv.Atoi(*cursor)
 	if err != nil {
 		return 0, fmt.Errorf("invalid cursor %q: %w", *cursor, err)
 	}
+
 	return id, nil
 }
 
@@ -324,6 +345,7 @@ func (s *MigrationStore) SaveIDCursorProgressInTx(ctx context.Context, tx pgx.Tx
 		VALUES (gen_random_uuid(), $1, 'in_progress', $2)
 		ON CONFLICT (step) DO UPDATE SET status = 'in_progress', page_cursor = EXCLUDED.page_cursor, error = NULL
 	`, step, cursor)
+
 	return err
 }
 
@@ -334,5 +356,6 @@ func (s *MigrationStore) MarkStepFailed(ctx context.Context, step string, offset
 		VALUES (gen_random_uuid(), $1, 'failed', $2, $3)
 		ON CONFLICT (step) DO UPDATE SET status = 'failed', page_offset = EXCLUDED.page_offset, error = EXCLUDED.error
 	`, step, offset, errMsg)
+
 	return err
 }

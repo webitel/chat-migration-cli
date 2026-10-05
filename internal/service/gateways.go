@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -14,7 +15,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/gofrs/uuid/v5"
+	"github.com/gofrs/uuid/v5" //nolint:depguard // NewV7AtTime is not available in google/uuid
+
 	modelnew "github.com/webitel/chat-migration-cli/internal/model/new"
 	modelold "github.com/webitel/chat-migration-cli/internal/model/old"
 	"github.com/webitel/chat-migration-cli/internal/model/old/proto"
@@ -24,12 +26,14 @@ func (c *Converter) MigrateFacebookProviders(ctx context.Context) error {
 	const (
 		perPage = 1000
 	)
+
 	c.log.Debug("starting facebook/whatsapp providers migration")
 
 	startOffset, err := c.newDB.MigrationStore().GetStepProgress(ctx, StepFacebookAndWhatsApp)
 	if err != nil {
 		return err
 	}
+
 	if startOffset > 0 {
 		c.log.Info("resuming facebook/whatsapp providers migration", "startOffset", startOffset)
 	}
@@ -37,6 +41,7 @@ func (c *Converter) MigrateFacebookProviders(ctx context.Context) error {
 	lastCommittedOffset := startOffset
 	fail := func(cause error) error {
 		_ = c.newDB.MigrationStore().MarkStepFailed(ctx, StepFacebookAndWhatsApp, lastCommittedOffset, cause.Error())
+
 		return cause
 	}
 
@@ -48,20 +53,27 @@ func (c *Converter) MigrateFacebookProviders(ctx context.Context) error {
 
 		iterate := true
 		absOffset := offset + startOffset
+
 		providers, err := c.oldDB.BotStore().GetMetaGateways(ctx, absOffset, limit)
 		if err != nil {
-			tx.Rollback(ctx)
+			_ = tx.Rollback(ctx)
+
 			return false, err
 		}
+
 		if len(providers) < limit {
 			iterate = false
 		}
+
 		c.log.Debug("providers page fetched", "offset", absOffset, "count", len(providers))
+
 		appsOldNewMap, gatesOldNewMap, err := c.BuildMetaGates(providers)
 		if err != nil {
-			tx.Rollback(ctx)
+			_ = tx.Rollback(ctx)
+
 			return false, err
 		}
+
 		var (
 			gates []*modelnew.Gate
 			apps  []*modelnew.MetaApp
@@ -69,17 +81,21 @@ func (c *Converter) MigrateFacebookProviders(ctx context.Context) error {
 			pages []*modelnew.Facebook
 			bots  []*modelnew.Bot
 		)
-		migrationRows := []*modelnew.MigrationRow{}
+
+		migrationRows := make([]*modelnew.MigrationRow, 0)
+
 		for oldID, providerGates := range gatesOldNewMap {
 			for _, gate := range providerGates {
 				gates = append(gates, gate)
-				if gate.FacebookPage != nil {
+				switch {
+				case gate.FacebookPage != nil:
 					pages = append(pages, gate.FacebookPage)
-				} else if gate.WhatsAppAccount != nil {
+				case gate.WhatsAppAccount != nil:
 					wabas = append(wabas, gate.WhatsAppAccount)
-				} else {
+				default:
 					continue
 				}
+
 				migrationRows = append(migrationRows,
 					&modelnew.MigrationRow{
 						ID:         uuid.Must(uuid.NewV7()),
@@ -90,9 +106,9 @@ func (c *Converter) MigrateFacebookProviders(ctx context.Context) error {
 					})
 
 				bots = append(bots, gate.Bot)
-
 			}
 		}
+
 		for oldID, app := range appsOldNewMap {
 			apps = append(apps, app)
 			migrationRows = append(migrationRows,
@@ -104,68 +120,86 @@ func (c *Converter) MigrateFacebookProviders(ctx context.Context) error {
 					EntityType: modelnew.EntityTypeProviderToMetaApp,
 				})
 		}
+
 		err = c.newDB.ProviderStore().InsertMetaApps(ctx, tx, apps)
 		if err != nil {
-			tx.Rollback(ctx)
+			_ = tx.Rollback(ctx)
+
 			return false, err
 		}
+
 		err = c.newDB.ProviderStore().InsertGates(ctx, tx, gates)
 		if err != nil {
-			tx.Rollback(ctx)
+			_ = tx.Rollback(ctx)
+
 			return false, err
 		}
+
 		err = c.newDB.ProviderStore().InsertFacebooks(ctx, tx, pages)
 		if err != nil {
-			tx.Rollback(ctx)
+			_ = tx.Rollback(ctx)
+
 			return false, err
 		}
+
 		err = c.newDB.ProviderStore().InsertGateWABAs(ctx, tx, wabas)
 		if err != nil {
-			tx.Rollback(ctx)
+			_ = tx.Rollback(ctx)
+
 			return false, err
 		}
+
 		err = c.newDB.ProviderStore().InsertBots(ctx, tx, bots)
 		if err != nil {
-			tx.Rollback(ctx)
+			_ = tx.Rollback(ctx)
+
 			return false, err
 		}
+
 		err = c.newDB.MigrationStore().InsertMigrations(ctx, tx, migrationRows)
 		if err != nil {
-			tx.Rollback(ctx)
+			_ = tx.Rollback(ctx)
+
 			return false, err
 		}
 
 		if err := c.newDB.MigrationStore().SaveStepProgressInTx(ctx, tx, StepFacebookAndWhatsApp, absOffset+limit); err != nil {
-			tx.Rollback(ctx)
+			_ = tx.Rollback(ctx)
+
 			return false, err
 		}
 
 		if err := tx.Commit(ctx); err != nil {
 			return false, err
 		}
+
 		lastCommittedOffset = absOffset + limit
 
 		c.log.Debug("providers page committed", "offset", absOffset, "count", len(providers))
 		c.addRecordsMigrated(len(gates))
+
 		return iterate, nil
 	})
-
 	if err != nil {
 		return fail(err)
 	}
+
 	return nil
 }
+
 func (c *Converter) MigrateFacebookProvidersSyncMode(ctx context.Context) error {
 	const (
 		perPage  = 1000
 		stepName = SyncStepFacebookAndWhatsApp
 	)
+
 	c.log.Debug("starting facebook/whatsapp providers migration")
 
 	startOffset, err := c.newDB.MigrationStore().GetStepProgress(ctx, stepName)
 	if err != nil {
 		return err
 	}
+
 	if startOffset > 0 {
 		c.log.Info("resuming facebook/whatsapp providers migration", "startOffset", startOffset)
 	}
@@ -178,6 +212,7 @@ func (c *Converter) MigrateFacebookProvidersSyncMode(ctx context.Context) error 
 	lastCommittedOffset := startOffset
 	fail := func(cause error) error {
 		_ = c.newDB.MigrationStore().MarkStepFailed(ctx, stepName, lastCommittedOffset, cause.Error())
+
 		return cause
 	}
 
@@ -189,24 +224,33 @@ func (c *Converter) MigrateFacebookProvidersSyncMode(ctx context.Context) error 
 
 		iterate := true
 		absOffset := offset + startOffset
+
 		providers, err := c.oldDB.BotStore().GetMetaGatewaysFromDate(ctx, absOffset, limit, completedAt)
 		if err != nil {
-			tx.Rollback(ctx)
+			_ = tx.Rollback(ctx)
+
 			return false, err
 		}
+
 		if len(providers) == 0 {
-			tx.Rollback(ctx)
+			_ = tx.Rollback(ctx)
+
 			return false, nil
 		}
+
 		if len(providers) < limit {
 			iterate = false
 		}
+
 		c.log.Debug("providers page fetched", "offset", absOffset, "count", len(providers))
+
 		appsOldNewMap, gatesOldNewMap, err := c.BuildMetaGates(providers)
 		if err != nil {
-			tx.Rollback(ctx)
+			_ = tx.Rollback(ctx)
+
 			return false, err
 		}
+
 		var (
 			gates []*modelnew.Gate
 			apps  []*modelnew.MetaApp
@@ -214,17 +258,21 @@ func (c *Converter) MigrateFacebookProvidersSyncMode(ctx context.Context) error 
 			pages []*modelnew.Facebook
 			bots  []*modelnew.Bot
 		)
-		migrationRows := []*modelnew.MigrationRow{}
+
+		migrationRows := make([]*modelnew.MigrationRow, 0)
+
 		for oldID, providerGates := range gatesOldNewMap {
 			for _, gate := range providerGates {
 				gates = append(gates, gate)
-				if gate.FacebookPage != nil {
+				switch {
+				case gate.FacebookPage != nil:
 					pages = append(pages, gate.FacebookPage)
-				} else if gate.WhatsAppAccount != nil {
+				case gate.WhatsAppAccount != nil:
 					wabas = append(wabas, gate.WhatsAppAccount)
-				} else {
+				default:
 					continue
 				}
+
 				migrationRows = append(migrationRows,
 					&modelnew.MigrationRow{
 						ID:         uuid.Must(uuid.NewV7()),
@@ -235,9 +283,9 @@ func (c *Converter) MigrateFacebookProvidersSyncMode(ctx context.Context) error 
 					})
 
 				bots = append(bots, gate.Bot)
-
 			}
 		}
+
 		for oldID, app := range appsOldNewMap {
 			apps = append(apps, app)
 			migrationRows = append(migrationRows,
@@ -249,68 +297,87 @@ func (c *Converter) MigrateFacebookProvidersSyncMode(ctx context.Context) error 
 					EntityType: modelnew.EntityTypeProviderToMetaApp,
 				})
 		}
+
 		err = c.newDB.ProviderStore().InsertMetaApps(ctx, tx, apps)
 		if err != nil {
-			tx.Rollback(ctx)
+			_ = tx.Rollback(ctx)
+
 			return false, err
 		}
+
 		err = c.newDB.ProviderStore().InsertGates(ctx, tx, gates)
 		if err != nil {
-			tx.Rollback(ctx)
+			_ = tx.Rollback(ctx)
+
 			return false, err
 		}
+
 		err = c.newDB.ProviderStore().InsertFacebooks(ctx, tx, pages)
 		if err != nil {
-			tx.Rollback(ctx)
+			_ = tx.Rollback(ctx)
+
 			return false, err
 		}
+
 		err = c.newDB.ProviderStore().InsertGateWABAs(ctx, tx, wabas)
 		if err != nil {
-			tx.Rollback(ctx)
+			_ = tx.Rollback(ctx)
+
 			return false, err
 		}
+
 		err = c.newDB.ProviderStore().InsertBots(ctx, tx, bots)
 		if err != nil {
-			tx.Rollback(ctx)
+			_ = tx.Rollback(ctx)
+
 			return false, err
 		}
+
 		err = c.newDB.MigrationStore().InsertMigrations(ctx, tx, migrationRows)
 		if err != nil {
-			tx.Rollback(ctx)
+			_ = tx.Rollback(ctx)
+
 			return false, err
 		}
 
 		if err := c.newDB.MigrationStore().SaveStepProgressInTx(ctx, tx, stepName, absOffset+limit); err != nil {
-			tx.Rollback(ctx)
+			_ = tx.Rollback(ctx)
+
 			return false, err
 		}
 
 		if err := tx.Commit(ctx); err != nil {
 			return false, err
 		}
+
 		lastCommittedOffset = absOffset + limit
 
 		c.log.Debug("providers page committed", "offset", absOffset, "count", len(providers))
 		c.addRecordsMigrated(len(gates))
+
 		return iterate, nil
 	})
-
 	if err != nil {
 		return fail(err)
 	}
+
 	return nil
 }
 
 func (c *Converter) BuildMetaGates(providers []*modelold.Provider[modelold.FBProviderMetadata]) (map[int]*modelnew.MetaApp, map[int][]*modelnew.Gate, error) {
-	resultGates := map[int][]*modelnew.Gate{}
-	resultApps := map[int]*modelnew.MetaApp{}
+	resultGates := make(map[int][]*modelnew.Gate)
+	resultApps := make(map[int]*modelnew.MetaApp)
+
 	for _, provider := range providers {
-		gates := []*modelnew.Gate{}
+		gates := make([]*modelnew.Gate, 0)
+
 		metadata := provider.Metadata
 		if metadata == nil {
 			c.log.Warn("metadata is nil", slog.Int("provider_id", provider.ID))
+
 			continue
 		}
+
 		metaApp := &modelnew.MetaApp{
 			ID:          uuid.Must(uuid.NewV7AtTime(provider.CreatedAt)),
 			Name:        provider.Name,
@@ -328,6 +395,7 @@ func (c *Converter) BuildMetaGates(providers []*modelold.Provider[modelold.FBPro
 			if err != nil {
 				return nil, nil, err
 			}
+
 			gates = append(gates, result...)
 		}
 
@@ -336,6 +404,7 @@ func (c *Converter) BuildMetaGates(providers []*modelold.Provider[modelold.FBPro
 			if err != nil {
 				return nil, nil, err
 			}
+
 			gates = append(gates, result...)
 		}
 
@@ -345,70 +414,83 @@ func (c *Converter) BuildMetaGates(providers []*modelold.Provider[modelold.FBPro
 				"instagram_manage_messages",
 			)
 		}
+
 		if len(metaApp.Scopes) == 0 {
 			slog.Warn("provider %d has no scopes, skipping", slog.Int("provider_id", provider.ID))
+
 			continue
 		}
 
 		resultGates[provider.ID] = gates
 		resultApps[provider.ID] = metaApp
-
 	}
+
 	return resultApps, resultGates, nil
 }
 
 func (c *Converter) BuildFBGates(metaApp *modelnew.MetaApp, provider *modelold.Provider[modelold.FBProviderMetadata]) ([]*modelnew.Gate, error) {
 	var gates []*modelnew.Gate
+
 	metaApp.Scopes = append(metaApp.Scopes,
 		"pages_show_list",
 		"pages_messaging",
 		"pages_manage_metadata",
 	)
+
 	fbPages, err := c.convertToFacebookPages(provider.Metadata.FB)
 	if err != nil {
 		return nil, err
 	}
+
 	for _, page := range fbPages {
 		gate, err := c.buildGate(provider, "facebook")
 		if err != nil {
 			return nil, err
 		}
+
 		page.GateID = gate.ID
 		page.MetaAppID = metaApp.ID
 		gate.FacebookPage = page
 		gates = append(gates, gate)
 	}
+
 	return gates, nil
 }
 
 func (c *Converter) BuildWAGates(metaApp *modelnew.MetaApp, provider *modelold.Provider[modelold.FBProviderMetadata]) ([]*modelnew.Gate, error) {
 	var gates []*modelnew.Gate
+
 	metaApp.Scopes = append(metaApp.Scopes,
-		"whatsapp_bussiness_management",
-		"whatsapp_bussiness_messaging",
+		"whatsapp_business_management",
+		"whatsapp_business_messaging",
 	)
+
 	waAccounts, err := c.convertToWABAAccounts(provider.Metadata.WhatsAppToken, provider.Metadata.WA)
 	if err != nil {
 		return nil, err
 	}
+
 	for _, account := range waAccounts {
 		gate, err := c.buildGate(provider, "whatsapp")
 		if err != nil {
 			return nil, err
 		}
+
 		account.MetaAppID = metaApp.ID
 		account.ID = gate.ID
 		gate.WhatsAppAccount = account
 		gates = append(gates, gate)
 	}
+
 	return gates, nil
 }
 
 func (c *Converter) buildGate(provider *modelold.Provider[modelold.FBProviderMetadata], providerType string) (*modelnew.Gate, error) {
 	metadata := provider.Metadata
 	if metadata == nil {
-		return nil, fmt.Errorf("metadata is nil")
+		return nil, errors.New("metadata is nil")
 	}
+
 	gateID := uuid.Must(uuid.NewV7AtTime(provider.CreatedAt))
 	gate := &modelnew.Gate{
 		ID:        gateID,
@@ -426,38 +508,45 @@ func (c *Converter) buildGate(provider *modelold.Provider[modelold.FBProviderMet
 			CreatedAt: provider.CreatedAt,
 		},
 	}
+
 	return gate, nil
 }
 
 func RandomBase64String(n int) string {
 	encoding := base64.RawURLEncoding
+
 	buf := make([]byte, encoding.DecodedLen(n))
 	if _, err := io.ReadFull(rand.Reader, buf); err != nil {
 		panic(err)
 	}
+
 	text := encoding.EncodeToString(buf)
+
 	return text[:n]
 }
 
 func (c *Converter) convertToFacebookPages(fb *proto.Messenger) ([]*modelnew.Facebook, error) {
-	pages := make([]*modelnew.Facebook, 0, len(fb.Pages))
-	for _, page := range fb.Pages {
+	pages := make([]*modelnew.Facebook, 0, len(fb.GetPages()))
+	for _, page := range fb.GetPages() {
 		if page == nil {
 			continue
 		}
-		if len(page.Accounts) == 0 {
+
+		if len(page.GetAccounts()) == 0 {
 			continue
 		}
-		encryptedToken, err := c.encryptor.EncryptToken(page.Accounts[0].AccessToken)
+
+		encryptedToken, err := c.encryptor.EncryptToken(page.GetAccounts()[0].GetAccessToken())
 		if err != nil {
 			return nil, fmt.Errorf("encrypt facebook page token: %w", err)
 		}
+
 		pages = append(pages, &modelnew.Facebook{
-			PageID:    page.Id,
+			PageID:    page.GetId(),
 			PageToken: encryptedToken,
 		})
-
 	}
+
 	return pages, nil
 }
 
@@ -466,11 +555,14 @@ func (c *Converter) convertToWABAAccounts(token, encoded string) ([]*modelnew.Ga
 	if err != nil {
 		return nil, err
 	}
+
 	encryptedToken, err := c.encryptor.EncryptToken(token)
 	if err != nil {
 		return nil, fmt.Errorf("encrypt whatsapp access token: %w", err)
 	}
+
 	var result []*modelnew.GateWABA
+
 	for _, account := range accounts {
 		for _, number := range account.PhoneNumbers.Data {
 			result = append(result, &modelnew.GateWABA{
@@ -483,6 +575,7 @@ func (c *Converter) convertToWABAAccounts(token, encoded string) ([]*modelnew.Ga
 			})
 		}
 	}
+
 	return result, nil
 }
 
@@ -521,21 +614,27 @@ func decodeWABAIDs(encoded string) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
+
 	const (
 		offset = '0'       // 0x30
 		delim  = ':' - '0' // 0x0A
 	)
+
 	var ids []string
+
 	for _, part := range bytes.Split(data, []byte{delim}) {
 		if len(part) == 0 {
 			continue
 		}
+
 		ascii := make([]byte, len(part))
 		for i, b := range part {
 			ascii[i] = b + offset
 		}
+
 		ids = append(ids, string(ascii))
 	}
+
 	return ids, nil
 }
 
@@ -547,11 +646,13 @@ func fetchAccounts(token string, wabaIDs []string) ([]*BusinessAccount, error) {
 		"fields":       {"id,name,phone_numbers{id,display_phone_number,verified_name}"},
 		"access_token": {token},
 	}
+
 	resp, err := http.Get("https://graph.facebook.com/v19.0/?" + params.Encode())
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+
+	defer func() { _ = resp.Body.Close() }()
 
 	body, _ := io.ReadAll(resp.Body)
 
@@ -564,5 +665,6 @@ func fetchAccounts(token string, wabaIDs []string) ([]*BusinessAccount, error) {
 	for _, a := range result {
 		accounts = append(accounts, a)
 	}
+
 	return accounts, nil
 }

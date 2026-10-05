@@ -6,9 +6,10 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"google.golang.org/protobuf/proto"
+
 	"github.com/webitel/chat-migration-cli/internal/model/old"
 	protomodel "github.com/webitel/chat-migration-cli/internal/model/old/proto"
-	"google.golang.org/protobuf/proto"
 )
 
 type BotStore struct {
@@ -19,9 +20,8 @@ func NewBotStore(db *DB) *BotStore {
 	return &BotStore{db: db}
 }
 
-func (s *BotStore) Get(ctx context.Context, offset int, limit int) ([]*old.Bot, error) {
-	var (
-		query = `SELECT ARRAY_AGG(id) ids,
+func (s *BotStore) Get(ctx context.Context, offset, limit int) ([]*old.Bot, error) {
+	query := `SELECT ARRAY_AGG(id) ids,
        dc,
        STRING_AGG(name, ',') name,
        flow_id,
@@ -33,10 +33,11 @@ GROUP BY
     flow_id, dc
 ORDER BY flow_id, dc
     OFFSET $1 LIMIT $2`
-	)
+
 	if offset < 0 {
 		offset = 0
 	}
+
 	if limit < 1 {
 		limit = 1
 	}
@@ -55,9 +56,8 @@ ORDER BY flow_id, dc
 	return res, nil
 }
 
-func (s *BotStore) GetFromDate(ctx context.Context, offset int, limit int, from *time.Time) ([]*old.Bot, error) {
-	var (
-		query = `SELECT ARRAY_AGG(id) ids,
+func (s *BotStore) GetFromDate(ctx context.Context, offset, limit int, from *time.Time) ([]*old.Bot, error) {
+	query := `SELECT ARRAY_AGG(id) ids,
        dc,
        STRING_AGG(name, ',') name,
        flow_id,
@@ -70,10 +70,11 @@ GROUP BY
     flow_id, dc
 ORDER BY flow_id, dc
     OFFSET $1 LIMIT $2`
-	)
+
 	if offset < 0 {
 		offset = 0
 	}
+
 	if limit < 1 {
 		limit = 1
 	}
@@ -108,19 +109,20 @@ type facebookGatewayMetadata struct {
 	Version string `json:"version"`
 }
 
-func (s *BotStore) GetMetaGateways(ctx context.Context, offset int, limit int) ([]*old.Provider[old.FBProviderMetadata], error) {
-	var (
-		query = `SELECT id, dc, uri, name, flow_id, enabled,
+func (s *BotStore) GetMetaGateways(ctx context.Context, offset, limit int) ([]*old.Provider[old.FBProviderMetadata], error) {
+	query := `SELECT id, dc, uri, name, flow_id, enabled,
        metadata, created_at, updated_at, updates
 FROM chat.bot
 WHERE provider = 'messenger'`
-	)
+
 	if offset < 0 {
 		offset = 0
 	}
+
 	if limit < 1 {
 		limit = 1
 	}
+
 	query += ` ORDER BY id OFFSET $1 LIMIT $2`
 
 	rows, err := s.db.Pool().Query(ctx, query, offset, limit)
@@ -135,6 +137,7 @@ WHERE provider = 'messenger'`
 	}
 
 	var res []*old.Provider[old.FBProviderMetadata]
+
 	for _, gateway := range internalResult {
 		metaGateway := &old.Provider[old.FBProviderMetadata]{
 			ID:        gateway.ID,
@@ -164,6 +167,7 @@ WHERE provider = 'messenger'`
 					return nil, err
 				}
 			}
+
 			if gateway.Metadata.IG != "" {
 				metaGateway.Metadata.IG, err = decodeFB(gateway.Metadata.IG)
 				if err != nil {
@@ -171,24 +175,25 @@ WHERE provider = 'messenger'`
 				}
 			}
 		}
+
 		res = append(res, metaGateway)
 	}
 
 	return res, nil
 }
 
-func (s *BotStore) GetMetaGatewaysFromDate(ctx context.Context, offset int, limit int, from time.Time) ([]*old.Provider[old.FBProviderMetadata], error) {
-	var (
-		query = `SELECT id, dc, uri, name, flow_id, enabled,
+func (s *BotStore) GetMetaGatewaysFromDate(ctx context.Context, offset, limit int, from time.Time) ([]*old.Provider[old.FBProviderMetadata], error) {
+	query := `SELECT id, dc, uri, name, flow_id, enabled,
        metadata, created_at, updated_at, updates
 FROM chat.bot
 WHERE provider = 'messenger' AND created_at >= $1
 ORDER BY id
 OFFSET $2 LIMIT $3`
-	)
+
 	if offset < 0 {
 		offset = 0
 	}
+
 	if limit < 1 {
 		limit = 1
 	}
@@ -205,6 +210,7 @@ OFFSET $2 LIMIT $3`
 	}
 
 	var res []*old.Provider[old.FBProviderMetadata]
+
 	for _, gateway := range internalResult {
 		metaGateway := &old.Provider[old.FBProviderMetadata]{
 			ID:        gateway.ID,
@@ -234,6 +240,7 @@ OFFSET $2 LIMIT $3`
 					return nil, err
 				}
 			}
+
 			if gateway.Metadata.IG != "" {
 				metaGateway.Metadata.IG, err = decodeFB(gateway.Metadata.IG)
 				if err != nil {
@@ -241,19 +248,23 @@ OFFSET $2 LIMIT $3`
 				}
 			}
 		}
+
 		res = append(res, metaGateway)
 	}
 
 	return res, nil
 }
+
 func decodeFB(fbEncoded string) (*protomodel.Messenger, error) {
 	data, err := base64.RawURLEncoding.DecodeString(fbEncoded)
 	if err != nil {
 		return nil, err
 	}
+
 	var msg protomodel.Messenger
 	if err := proto.Unmarshal(data, &msg); err != nil {
 		return nil, err
 	}
+
 	return &msg, nil
 }

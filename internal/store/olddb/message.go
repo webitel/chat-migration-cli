@@ -3,7 +3,8 @@ package olddb
 import (
 	"context"
 
-	"github.com/gofrs/uuid/v5"
+	"github.com/gofrs/uuid/v5" //nolint:depguard // NewV7AtTime is not available in google/uuid
+
 	"github.com/webitel/chat-migration-cli/internal/model/old"
 )
 
@@ -40,6 +41,7 @@ WHERE m.conversation_id = ANY ($1)
 ORDER BY m.created_at`
 		messages []*old.Message
 	)
+
 	rows, err := s.db.Pool().Query(ctx, query, conversationIDs)
 	if err != nil {
 		return nil, err
@@ -48,6 +50,7 @@ ORDER BY m.created_at`
 
 	for rows.Next() {
 		var m old.Message
+
 		err := rows.Scan(
 			&m.ID,
 			&m.ConversationID,
@@ -69,6 +72,7 @@ ORDER BY m.created_at`
 		if err != nil {
 			return nil, err
 		}
+
 		messages = append(messages, &m)
 	}
 

@@ -10,6 +10,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/spf13/viper"
+
 	"github.com/webitel/chat-migration-cli/internal/service"
 	"github.com/webitel/chat-migration-cli/internal/store/newdb"
 	"github.com/webitel/chat-migration-cli/internal/store/olddb"
@@ -38,6 +39,12 @@ func main() {
 	log := buildLogger(cfg.LogLevel, cfg.LogJSON)
 	slog.SetDefault(log)
 
+	if err := run(cfg, log); err != nil {
+		os.Exit(1)
+	}
+}
+
+func run(cfg config, log *slog.Logger) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
@@ -46,38 +53,44 @@ func main() {
 	oldPool, err := buildPool(ctx, cfg.OldDBDSN, cfg.OldDBConns)
 	if err != nil {
 		log.Error("old DB connection failed", "error", err)
-		os.Exit(1)
+
+		return err
 	}
 	defer oldPool.Close()
 
 	newPool, err := buildPool(ctx, cfg.NewDBDSN, cfg.NewDBConns)
 	if err != nil {
 		log.Error("new DB connection failed", "error", err)
-		os.Exit(1)
+
+		return err
 	}
 	defer newPool.Close()
 
 	srcDB, err := olddb.New(oldPool, cfg.MigratePortalClients)
 	if err != nil {
 		log.Error("source DB init failed", "error", err)
-		os.Exit(1)
+
+		return err
 	}
 
 	dstDB, err := newdb.New(newPool, cfg.MigratePortalClients)
 	if err != nil {
 		log.Error("destination DB init failed", "error", err)
-		os.Exit(1)
+
+		return err
 	}
 
 	encryptor, err := service.NewEncryptor(cfg.EncryptionKey)
 	if err != nil {
 		log.Error("failed to create encryptor", "error", err)
-		os.Exit(1)
+
+		return err
 	}
 
 	converter := service.NewConverter(srcDB, dstDB, encryptor, cfg.Sync, cfg.MigratePortalClients, cfg.BotMappingTable)
 
 	var runErr error
+
 	switch {
 	case cfg.SingleStep:
 		log.Info("running single migration step", "step", cfg.StartFrom)
@@ -87,14 +100,19 @@ func main() {
 		runErr = converter.MigrateFromStep(ctx, cfg.StartFrom)
 	default:
 		log.Info("starting full migration")
+
 		runErr = converter.Migrate(ctx)
 	}
 
 	if runErr != nil {
 		log.Error("migration failed", "error", runErr)
-		os.Exit(1)
+
+		return runErr
 	}
+
 	log.Info("migration completed")
+
+	return nil
 }
 
 func mustLoadConfig() config {
@@ -115,19 +133,24 @@ func mustLoadConfig() config {
 	oldDSN := v.GetString("OLD_DB_DSN")
 	newDSN := v.GetString("NEW_DB_DSN")
 	encryptionKey := v.GetString("ENCRYPTION_KEY")
+
 	if oldDSN == "" {
 		slog.Error("MIGRATION_OLD_DB_DSN is required")
 		os.Exit(1)
 	}
+
 	if newDSN == "" {
 		slog.Error("MIGRATION_NEW_DB_DSN is required")
 		os.Exit(1)
 	}
+
 	if encryptionKey == "" {
 		slog.Error("MIGRATION_ENCRYPTION_KEY is required")
 		os.Exit(1)
 	}
+
 	startFrom := v.GetString("START_FROM_STEP")
+
 	singleStep := v.GetBool("SINGLE_STEP")
 	if singleStep && startFrom == "" {
 		slog.Error("MIGRATION_START_FROM_STEP is required when MIGRATION_SINGLE_STEP is enabled")
@@ -147,6 +170,7 @@ func mustLoadConfig() config {
 			os.Exit(1)
 		}
 	}
+
 	return config{
 		OldDBDSN:             oldDSN,
 		NewDBDSN:             newDSN,
@@ -165,12 +189,14 @@ func mustLoadConfig() config {
 
 func buildLogger(level slog.Level, json bool) *slog.Logger {
 	opts := &slog.HandlerOptions{Level: level}
+
 	var h slog.Handler
 	if json {
 		h = slog.NewJSONHandler(os.Stderr, opts)
 	} else {
 		h = slog.NewTextHandler(os.Stderr, opts)
 	}
+
 	return slog.New(h)
 }
 
@@ -179,8 +205,10 @@ func buildPool(ctx context.Context, dsn string, maxConns int32) (*pgxpool.Pool, 
 	if err != nil {
 		return nil, err
 	}
+
 	if maxConns > 0 {
 		cfg.MaxConns = maxConns
 	}
+
 	return pgxpool.NewWithConfig(ctx, cfg)
 }

@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+
 	"github.com/webitel/chat-migration-cli/internal/model/old"
 )
 
@@ -17,9 +18,8 @@ func NewConversationStore(db *DB) *ConversationStore {
 	return &ConversationStore{db: db}
 }
 
-func (s *ConversationStore) GetGroupedConversationsByUsersAndFlow(ctx context.Context, lastSeenInitiatorID int, lastSeenFlowID int, limit int) ([]*old.GroupedConversation, error) {
-	var (
-		query = `
+func (s *ConversationStore) GetGroupedConversationsByUsersAndFlow(ctx context.Context, lastSeenInitiatorID, lastSeenFlowID, limit int) ([]*old.GroupedConversation, error) {
+	query := `
 		WITH conversations AS (SELECT conv.id id,
                               initiator.user_id       initiator,
                               (conv.props ->> 'flow') flow_id,
@@ -61,7 +61,7 @@ LEFT JOIN LATERAL (SELECT JSONB_AGG(users.user) internal_users
                                     AND ch.internal
                                   GROUP BY user_id) users) users ON true
 `
-	)
+
 	rows, err := s.db.Pool().Query(ctx, query, lastSeenInitiatorID, strconv.Itoa(lastSeenFlowID), limit)
 	if err != nil {
 		return nil, err
@@ -76,9 +76,8 @@ LEFT JOIN LATERAL (SELECT JSONB_AGG(users.user) internal_users
 	return result, nil
 }
 
-func (s *ConversationStore) GetGroupedConversationsByUsersAndFlowFromDate(ctx context.Context, lastSeenInitiatorID int, lastSeenFlowID int, limit int, fromDate time.Time) ([]*old.GroupedConversation, error) {
-	var (
-		query = `
+func (s *ConversationStore) GetGroupedConversationsByUsersAndFlowFromDate(ctx context.Context, lastSeenInitiatorID, lastSeenFlowID, limit int, fromDate time.Time) ([]*old.GroupedConversation, error) {
+	query := `
 		WITH conversations AS (SELECT conv.id id,
                               initiator.user_id       initiator,
                               (conv.props ->> 'flow') flow_id,
@@ -121,7 +120,7 @@ LEFT JOIN LATERAL (SELECT JSONB_AGG(users.user) internal_users
                                     AND ch.internal
                                   GROUP BY user_id) users) users ON true
 `
-	)
+
 	rows, err := s.db.Pool().Query(ctx, query, lastSeenInitiatorID, strconv.Itoa(lastSeenFlowID), fromDate, limit)
 	if err != nil {
 		return nil, err
